@@ -120,12 +120,14 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
   /** The version that added information about the Lucene version at the time when the index has been created. */
   public static final int VERSION_70 = 7;
-
-  static final int VERSION_CURRENT = VERSION_70;
+  /** The version that updated segment name counter to be long instead of int. */
+  public static final int VERSION_72 = 8;
+  /** The version that recorded softDelCount */
+  public static final int VERSION_74 = 9;
+  static final int VERSION_CURRENT = VERSION_74;
 
   /** Used to name new segments. */
-  // TODO: should this be a long ...?
-  public int counter;
+  public long counter;
   
   /** Counts how often the index has been changed.  */
   public long version;
@@ -326,7 +328,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     infos.version = input.readLong();
     //System.out.println("READ sis version=" + infos.version);
-    infos.counter = input.readInt();
+    if (format > VERSION_70) {
+      infos.counter = input.readVLong();
+    } else {
+      infos.counter = input.readInt();
+    }
     int numSegments = input.readInt();
     if (numSegments < 0) {
       throw new CorruptIndexException("invalid segment count: " + numSegments, input);
@@ -354,7 +360,14 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       }
       long fieldInfosGen = input.readLong();
       long dvGen = input.readLong();
-      SegmentCommitInfo siPerCommit = new SegmentCommitInfo(info, delCount, delGen, fieldInfosGen, dvGen);
+      int softDelCount = format > VERSION_72 ? input.readInt() : 0;
+      if (softDelCount < 0 || softDelCount > info.maxDoc()) {
+        throw new CorruptIndexException("invalid deletion count: " + softDelCount + " vs maxDoc=" + info.maxDoc(), input);
+      }
+      if (softDelCount + delCount > info.maxDoc()) {
+        throw new CorruptIndexException("invalid deletion count: " + softDelCount + delCount + " vs maxDoc=" + info.maxDoc(), input);
+      }
+      SegmentCommitInfo siPerCommit = new SegmentCommitInfo(info, delCount, softDelCount, delGen, fieldInfosGen, dvGen);
       siPerCommit.setFieldInfosFiles(input.readSetOfStrings());
       final Map<Integer,Set<String>> dvUpdateFiles;
       final int numDVFields = input.readInt();
@@ -469,8 +482,8 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
 
     out.writeVInt(indexCreatedVersionMajor);
 
-    out.writeLong(version); 
-    out.writeInt(counter); // write counter
+    out.writeLong(version);
+    out.writeVLong(counter); // write counter
     out.writeInt(size());
 
     if (size() > 0) {
@@ -512,6 +525,11 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
       out.writeInt(delCount);
       out.writeLong(siPerCommit.getFieldInfosGen());
       out.writeLong(siPerCommit.getDocValuesGen());
+      int softDelCount = siPerCommit.getSoftDelCount();
+      if (softDelCount < 0 || softDelCount > si.maxDoc()) {
+        throw new IllegalStateException("cannot write segment: invalid maxDoc segment=" + si.name + " maxDoc=" + si.maxDoc() + " softDelCount=" + softDelCount);
+      }
+      out.writeInt(softDelCount);
       out.writeSetOfStrings(siPerCommit.getFieldInfosFiles());
       final Map<Integer,Set<String>> dvUpdatesFiles = siPerCommit.getDocValuesUpdatesFiles();
       out.writeInt(dvUpdatesFiles.size());
@@ -742,6 +760,7 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
     if (pendingCommit) {
       throw new IllegalStateException("prepareCommit was already called");
     }
+    dir.syncMetaData();
     write(dir);
   }
 
@@ -967,8 +986,8 @@ public final class SegmentInfos implements Cloneable, Iterable<SegmentCommitInfo
   /** Remove the provided {@link SegmentCommitInfo}.
    *
    * <p><b>WARNING</b>: O(N) cost */
-  public void remove(SegmentCommitInfo si) {
-    segments.remove(si);
+  public boolean remove(SegmentCommitInfo si) {
+    return segments.remove(si);
   }
   
   /** Remove the {@link SegmentCommitInfo} at the

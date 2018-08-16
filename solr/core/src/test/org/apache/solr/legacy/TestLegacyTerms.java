@@ -56,8 +56,8 @@ public class TestLegacyTerms extends LuceneTestCase {
     
     IndexReader r = w.getReader();
     Terms terms = MultiFields.getTerms(r, "field");
-    assertEquals(new Integer(minValue), LegacyNumericUtils.getMinInt(terms));
-    assertEquals(new Integer(maxValue), LegacyNumericUtils.getMaxInt(terms));
+    assertEquals(Integer.valueOf(minValue), LegacyNumericUtils.getMinInt(terms));
+    assertEquals(Integer.valueOf(maxValue), LegacyNumericUtils.getMaxInt(terms));
 
     r.close();
     w.close();
@@ -87,8 +87,8 @@ public class TestLegacyTerms extends LuceneTestCase {
     IndexReader r = w.getReader();
 
     Terms terms = MultiFields.getTerms(r, "field");
-    assertEquals(new Long(minValue), LegacyNumericUtils.getMinLong(terms));
-    assertEquals(new Long(maxValue), LegacyNumericUtils.getMaxLong(terms));
+    assertEquals(Long.valueOf(minValue), LegacyNumericUtils.getMinLong(terms));
+    assertEquals(Long.valueOf(maxValue), LegacyNumericUtils.getMaxLong(terms));
 
     r.close();
     w.close();
@@ -153,9 +153,9 @@ public class TestLegacyTerms extends LuceneTestCase {
   private static Terms EMPTY_TERMS = new Terms() {
     public TermsEnum iterator() { return TermsEnum.EMPTY; }
     public long size() { return -1; }
-    public long getSumTotalTermFreq() { return -1; }
-    public long getSumDocFreq() { return -1; }
-    public int getDocCount() { return -1; }
+    public long getSumTotalTermFreq() { return 0; }
+    public long getSumDocFreq() { return 0; }
+    public int getDocCount() { return 0; }
     public boolean hasFreqs() { return false; }
     public boolean hasOffsets() { return false; }
     public boolean hasPositions() { return false; }

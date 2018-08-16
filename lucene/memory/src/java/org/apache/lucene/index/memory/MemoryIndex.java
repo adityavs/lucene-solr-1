@@ -38,6 +38,7 @@ import org.apache.lucene.document.FieldType;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.similarities.Similarity;
@@ -500,7 +501,7 @@ public class MemoryIndex {
     IndexOptions indexOptions = storeOffsets ? IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS : IndexOptions.DOCS_AND_FREQS_AND_POSITIONS;
     return new FieldInfo(fieldName, ord, fieldType.storeTermVectors(), fieldType.omitNorms(), storePayloads,
         indexOptions, fieldType.docValuesType(), -1, Collections.emptyMap(),
-        fieldType.pointDimensionCount(), fieldType.pointNumBytes());
+        fieldType.pointDimensionCount(), fieldType.pointNumBytes(), false);
   }
 
   private void storePointValues(Info info, BytesRef pointValue) {
@@ -519,7 +520,7 @@ public class MemoryIndex {
       info.fieldInfo = new FieldInfo(
           info.fieldInfo.name, info.fieldInfo.number, info.fieldInfo.hasVectors(), info.fieldInfo.hasPayloads(),
           info.fieldInfo.hasPayloads(), info.fieldInfo.getIndexOptions(), docValuesType, -1, info.fieldInfo.attributes(),
-          info.fieldInfo.getPointDimensionCount(), info.fieldInfo.getPointNumBytes()
+          info.fieldInfo.getPointDimensionCount(), info.fieldInfo.getPointNumBytes(), info.fieldInfo.isSoftDeletesField()
       );
     } else if (existingDocValuesType != docValuesType) {
       throw new IllegalArgumentException("Can't add [" + docValuesType + "] doc values field [" + fieldName + "], because [" + existingDocValuesType + "] doc values field already exists");
@@ -596,6 +597,7 @@ public class MemoryIndex {
           info.sliceArray.start[ord] = postingsWriter.startNewSlice();
         }
         info.sliceArray.freq[ord]++;
+        info.maxTermFrequency = Math.max(info.maxTermFrequency, info.sliceArray.freq[ord]);
         info.sumTotalTermFreq++;
         postingsWriter.writeInt(pos);
         if (storeOffsets) {
@@ -698,8 +700,8 @@ public class MemoryIndex {
         }
         
         @Override
-        public boolean needsScores() {
-          return true;
+        public ScoreMode scoreMode() {
+          return ScoreMode.COMPLETE;
         }
       });
       float score = scores[0];
@@ -805,6 +807,8 @@ public class MemoryIndex {
     private int numOverlapTokens;
 
     private long sumTotalTermFreq;
+    
+    private int maxTermFrequency;
 
     /** the last position encountered in this field for multi field support*/
     private int lastPosition;
@@ -899,8 +903,8 @@ public class MemoryIndex {
 
     NumericDocValues getNormDocValues() {
       if (norm == null) {
-        FieldInvertState invertState = new FieldInvertState(Version.LATEST.major, fieldInfo.name, fieldInfo.number,
-            numTokens, numOverlapTokens, 0);
+        FieldInvertState invertState = new FieldInvertState(Version.LATEST.major, fieldInfo.name, fieldInfo.getIndexOptions(), lastPosition,
+            numTokens, numOverlapTokens, 0, maxTermFrequency, terms.size());
         final long value = normSimilarity.computeNorm(invertState);
         if (DEBUG) System.err.println("MemoryIndexReader.norms: " + fieldInfo.name + ":" + value + ":" + numTokens);
 
@@ -929,7 +933,7 @@ public class MemoryIndex {
     }
 
     int docId() {
-      return doc > 1 ? NumericDocValues.NO_MORE_DOCS : doc;
+      return doc > 0 ? NumericDocValues.NO_MORE_DOCS : doc;
     }
 
   }
@@ -1421,6 +1425,11 @@ public class MemoryIndex {
         }
         final int ord = info.sortedTerms[termUpto];
         return ((MemoryPostingsEnum) reuse).reset(info.sliceArray.start[ord], info.sliceArray.end[ord], info.sliceArray.freq[ord]);
+      }
+
+      @Override
+      public ImpactsEnum impacts(int flags) throws IOException {
+        return new SlowImpactsEnum(postings(null, flags));
       }
 
       @Override

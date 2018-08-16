@@ -19,6 +19,7 @@ import java.io.File;
 import java.util.SortedMap;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.lucene.util.LuceneTestCase;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.embedded.JettyConfig;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
@@ -73,6 +74,7 @@ public class TestLTROnSolrCloud extends TestRerankBase {
   }
 
   @Test
+  @LuceneTestCase.BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 2-Aug-2018
   public void testSimpleQuery() throws Exception {
     // will randomly pick a configuration with [1..5] shards and [1..3] replicas
 
@@ -262,26 +264,26 @@ public class TestLTROnSolrCloud extends TestRerankBase {
 
     loadFeature(
             featureNames[0],
-            SolrFeature.class.getCanonicalName(),
+            SolrFeature.class.getName(),
             featureStore,
             "{\"q\":\"{!func}pow(popularity,2)\"}"
     );
     loadFeature(
             featureNames[1],
-            ValueFeature.class.getCanonicalName(),
+            ValueFeature.class.getName(),
             featureStore,
             "{\"value\":2}"
     );
     loadFeature(
             featureNames[2],
-            OriginalScoreFeature.class.getCanonicalName(),
+            OriginalScoreFeature.class.getName(),
             featureStore,
             null
     );
 
     loadModel(
              "powpularityS-model",
-             LinearModel.class.getCanonicalName(),
+             LinearModel.class.getName(),
              featureNames,
              featureStore,
              jsonModelParams

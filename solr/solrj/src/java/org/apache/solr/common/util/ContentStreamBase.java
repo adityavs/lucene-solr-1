@@ -17,6 +17,7 @@
 package org.apache.solr.common.util;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -29,6 +30,9 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+
+import org.apache.solr.client.solrj.SolrRequest;
+import org.apache.solr.client.solrj.request.RequestWriter;
 
 /**
  * Three concrete implementations for ContentStream - one for File/URL/String
@@ -83,7 +87,7 @@ public abstract class ContentStreamBase implements ContentStream
       
       contentType = conn.getContentType();
       name = url.toExternalForm();
-      size = new Long( conn.getContentLength() );
+      size = (long) conn.getContentLength();
       return conn.getInputStream();
     }
   }
@@ -151,7 +155,7 @@ public abstract class ContentStreamBase implements ContentStream
       this.contentType = contentType;
       name = null;
       try {
-        size = new Long( str.getBytes(DEFAULT_CHARSET).length );
+        size = (long) str.getBytes(DEFAULT_CHARSET).length;
       } catch (UnsupportedEncodingException e) {
         // won't happen
         throw new RuntimeException(e);
@@ -251,6 +255,12 @@ public abstract class ContentStreamBase implements ContentStream
   public void setSourceInfo(String sourceInfo) {
     this.sourceInfo = sourceInfo;
   }
+  public static ContentStream create(RequestWriter requestWriter, SolrRequest req) throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    RequestWriter.ContentWriter contentWriter = requestWriter.getContentWriter(req);
+    contentWriter.write(baos);
+    return new ByteArrayStream(baos.toByteArray(), null,contentWriter.getContentType() );
+  }
   
   /**
    * Construct a <code>ContentStream</code> from a <code>File</code>
@@ -267,7 +277,7 @@ public abstract class ContentStreamBase implements ContentStream
       
       this.contentType = contentType;
       name = source;
-      size = new Long(bytes.length);
+      size = (long) bytes.length;
       sourceInfo = source;
     }
 

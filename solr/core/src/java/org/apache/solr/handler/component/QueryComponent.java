@@ -167,7 +167,7 @@ public class QueryComponent extends SearchComponent
 
       String rankQueryString = rb.req.getParams().get(CommonParams.RQ);
       if(rankQueryString != null) {
-        QParser rqparser = QParser.getParser(rankQueryString, defType, req);
+        QParser rqparser = QParser.getParser(rankQueryString, req);
         Query rq = rqparser.getQuery();
         if(rq instanceof RankQuery) {
           RankQuery rankQuery = (RankQuery)rq;
@@ -337,7 +337,7 @@ public class QueryComponent extends SearchComponent
                               CursorMarkParams.CURSOR_MARK_PARAM + " and " + CommonParams.TIME_ALLOWED);
     }
 
-    QueryCommand cmd = rb.getQueryCommand();
+    QueryCommand cmd = rb.createQueryCommand();
     cmd.setTimeAllowed(timeAllowed);
 
     req.getContext().put(SolrIndexSearcher.STATS_SOURCE, statsCache.get(req));
@@ -1327,6 +1327,7 @@ public class QueryComponent extends SearchComponent
 
       secondPhaseBuilder.addCommandField(
           new TopGroupsFieldCommand.Builder()
+              .setQuery(cmd.getQuery())
               .setField(schemaField)
               .setGroupSort(groupingSpec.getGroupSort())
               .setSortWithinGroup(groupingSpec.getSortWithinGroup())
@@ -1481,8 +1482,8 @@ public class QueryComponent extends SearchComponent
     }
 
     @Override
-    public int freq() throws IOException {
-      throw new UnsupportedOperationException();
+    public float getMaxScore(int upTo) throws IOException {
+      return Float.POSITIVE_INFINITY;
     }
 
     @Override

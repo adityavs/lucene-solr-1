@@ -99,17 +99,11 @@ public class BM25NBClassifier implements Classifier<BytesRef> {
     this.query = query;
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public ClassificationResult<BytesRef> assignClass(String inputDocument) throws IOException {
     return assignClassNormalizedList(inputDocument).get(0);
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public List<ClassificationResult<BytesRef>> getClasses(String text) throws IOException {
     List<ClassificationResult<BytesRef>> assignedClasses = assignClassNormalizedList(text);
@@ -117,9 +111,6 @@ public class BM25NBClassifier implements Classifier<BytesRef> {
     return assignedClasses;
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public List<ClassificationResult<BytesRef>> getClasses(String text, int max) throws IOException {
     List<ClassificationResult<BytesRef>> assignedClasses = assignClassNormalizedList(text);
@@ -226,7 +217,7 @@ public class BM25NBClassifier implements Classifier<BytesRef> {
       builder.add(query, BooleanClause.Occur.MUST);
     }
     TopDocs search = indexSearcher.search(builder.build(), 1);
-    return search.totalHits > 0 ? search.getMaxScore() : 1;
+    return search.totalHits.value > 0 ? search.scoreDocs[0].score : 1;
   }
 
   private double calculateLogPrior(Term term) throws IOException {
@@ -237,7 +228,7 @@ public class BM25NBClassifier implements Classifier<BytesRef> {
       bq.add(query, BooleanClause.Occur.MUST);
     }
     TopDocs topDocs = indexSearcher.search(bq.build(), 1);
-    return topDocs.totalHits > 0 ? Math.log(topDocs.getMaxScore()) : 0;
+    return topDocs.totalHits.value > 0 ? Math.log(topDocs.scoreDocs[0].score) : 0;
   }
 
 }

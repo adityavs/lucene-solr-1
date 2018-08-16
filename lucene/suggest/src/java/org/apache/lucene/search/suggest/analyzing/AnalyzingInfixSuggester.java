@@ -59,8 +59,6 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.EarlyTerminatingSortingCollector;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PrefixQuery;
@@ -361,7 +359,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
                 : "no need \"textgrams\" when minPrefixChars="+minPrefixChars;
         if (fieldName.equals(TEXTGRAMS_FIELD_NAME) && minPrefixChars > 0) {
           // TODO: should use an EdgeNGramTokenFilterFactory here
-          TokenFilter filter = new EdgeNGramTokenFilter(components.getTokenStream(), 1, minPrefixChars);
+          TokenFilter filter = new EdgeNGramTokenFilter(components.getTokenStream(), 1, minPrefixChars, false);
           return new TokenStreamComponents(components.getTokenizer(), filter);
         } else {
           return components;
@@ -649,11 +647,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
     //System.out.println("finalQuery=" + finalQuery);
 
     // Sort by weight, descending:
-    TopFieldCollector c = TopFieldCollector.create(SORT, num, true, false, false);
-
-    // We sorted postings by weight during indexing, so we
-    // only retrieve the first num hits now:
-    Collector c2 = new EarlyTerminatingSortingCollector(c, SORT, num);
+    TopFieldCollector c = TopFieldCollector.create(SORT, num, 1);
     List<LookupResult> results = null;
     SearcherManager mgr;
     IndexSearcher searcher;
@@ -663,7 +657,7 @@ public class AnalyzingInfixSuggester extends Lookup implements Closeable {
     }
     try {
       //System.out.println("got searcher=" + searcher);
-      searcher.search(finalQuery, c2);
+      searcher.search(finalQuery, c);
 
       TopFieldDocs hits = c.topDocs();
 

@@ -49,9 +49,10 @@ import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.queries.payloads.PayloadDecoder;
 import org.apache.lucene.search.similarities.Similarity;
-import org.apache.solr.uninverting.UninvertingReader;
 import org.apache.lucene.util.Version;
+import org.apache.solr.common.MapSerializable;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.params.CommonParams;
@@ -62,14 +63,15 @@ import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.Pair;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.Config;
-import org.apache.solr.common.MapSerializable;
 import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.response.SchemaXmlWriter;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.search.similarities.SchemaSimilarityFactory;
+import org.apache.solr.uninverting.UninvertingReader;
 import org.apache.solr.util.DOMUtil;
+import org.apache.solr.util.PayloadUtils;
 import org.apache.solr.util.plugin.SolrCoreAware;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,6 +107,8 @@ public class IndexSchema {
   public static final String LUCENE_MATCH_VERSION_PARAM = "luceneMatchVersion";
   public static final String MAX_CHARS = "maxChars";
   public static final String NAME = "name";
+  public static final String NEST_PARENT_FIELD_NAME = "_nest_parent_";
+  public static final String NEST_PATH_FIELD_NAME = "_nest_path_";
   public static final String REQUIRED = "required";
   public static final String SCHEMA = "schema";
   public static final String SIMILARITY = "similarity";
@@ -149,6 +153,8 @@ public class IndexSchema {
   
   protected DynamicCopy[] dynamicCopyFields;
   public DynamicCopy[] getDynamicCopyFields() { return dynamicCopyFields; }
+
+  private Map<FieldType, PayloadDecoder> decoders = new HashMap<>();  // cache to avoid scanning token filters repeatedly, unnecessarily
 
   /**
    * keys are all fields copied to, count is num of copyField
@@ -967,7 +973,7 @@ public class IndexSchema {
         // configure a factory, get a similarity back
         final NamedList<Object> namedList = DOMUtil.childNodesToNamedList(node);
         namedList.add(SimilarityFactory.CLASS_NAME, classArg);
-        SolrParams params = SolrParams.toSolrParams(namedList);
+        SolrParams params = namedList.toSolrParams();
         similarityFactory = (SimilarityFactory)obj;
         similarityFactory.init(params);
       } else {
@@ -1932,9 +1938,18 @@ public class IndexSchema {
    * @lucene.internal
    */
   public boolean isUsableForChildDocs() {
-    FieldType rootType = getFieldType(ROOT_FIELD_NAME);
+    //TODO make this boolean a field so it needn't be looked up each time?
+    FieldType rootType = getFieldTypeNoEx(ROOT_FIELD_NAME);
     return (null != uniqueKeyFieldType &&
             null != rootType &&
             rootType.getTypeName().equals(uniqueKeyFieldType.getTypeName()));
   }
+
+  public PayloadDecoder getPayloadDecoder(String field) {
+    FieldType ft = getFieldType(field);
+    if (ft == null)
+      return null;
+    return decoders.computeIfAbsent(ft, f -> PayloadUtils.getPayloadDecoder(ft));
+  }
+
 }

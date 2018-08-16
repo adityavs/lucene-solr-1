@@ -182,9 +182,14 @@ public interface CommonParams {
   String AUTHZ_PATH = "/admin/authorization";
   String AUTHC_PATH = "/admin/authentication";
   String ZK_PATH = "/admin/zookeeper";
+  String ZK_STATUS_PATH = "/admin/zookeeper/status";
+  String SYSTEM_INFO_PATH = "/admin/info/system";
   String METRICS_PATH = "/admin/metrics";
+  String METRICS_HISTORY_PATH = "/admin/metrics/history";
   String AUTOSCALING_PATH = "/admin/autoscaling";
+  String AUTOSCALING_HISTORY_PATH = "/admin/autoscaling/history";
   String AUTOSCALING_DIAGNOSTICS_PATH = "/admin/autoscaling/diagnostics";
+  String AUTOSCALING_SUGGESTIONS_PATH = "/admin/autoscaling/suggestions";
 
   String STATUS = "status";
 
@@ -196,11 +201,15 @@ public interface CommonParams {
       COLLECTIONS_HANDLER_PATH,
       HEALTH_CHECK_HANDLER_PATH,
       CONFIGSETS_HANDLER_PATH,
+      SYSTEM_INFO_PATH,
       AUTHC_PATH,
       AUTHZ_PATH,
       METRICS_PATH,
+      METRICS_HISTORY_PATH,
       AUTOSCALING_PATH,
-      AUTOSCALING_DIAGNOSTICS_PATH)));
+      AUTOSCALING_HISTORY_PATH,
+      AUTOSCALING_DIAGNOSTICS_PATH,
+      AUTOSCALING_SUGGESTIONS_PATH)));
   String APISPEC_LOCATION = "apispec/";
   String INTROSPECT = "/_introspect";
 
@@ -240,6 +249,9 @@ public interface CommonParams {
   String TRUE = Boolean.TRUE.toString();
   String FALSE = Boolean.FALSE.toString();
 
+  /** document type in {@link CollectionAdminParams#SYSTEM_COLL} collection. **/
+  String TYPE = "type";
+
   /** Used as a local parameter on queries.  cache=false means don't check any query or filter caches.
    * cache=true is the default.
    */
@@ -262,6 +274,7 @@ public interface CommonParams {
 
   /**
    * When querying a node, prefer local node's cores for distributed queries.
+   * @deprecated Use {@code ShardParams.SHARDS_PREFERENCE}
    */
   String PREFER_LOCAL_SHARDS = "preferLocalShards";
 
@@ -277,5 +290,14 @@ public interface CommonParams {
   String VERSION_FIELD="_version_";
 
   String ID = "id";
+  String JSON_MIME = "application/json";
+
+  String JAVABIN_MIME = "application/javabin";
+
+  /**
+   * If set to true, child documents will be added as anonymous children into the _childDocuments list,
+   * else, child documents will be added to SolrInputDocument as field values according to their key name.
+   */
+  String ANONYMOUS_CHILD_DOCS = "anonChildDocs";
 }
 

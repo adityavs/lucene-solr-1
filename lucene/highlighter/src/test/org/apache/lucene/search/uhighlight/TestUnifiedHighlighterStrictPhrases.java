@@ -17,6 +17,7 @@
 package org.apache.lucene.search.uhighlight;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 
@@ -38,13 +39,17 @@ import org.apache.lucene.search.MultiPhraseQuery;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.search.spans.SpanMultiTermQueryWrapper;
 import org.apache.lucene.search.spans.SpanNearQuery;
+import org.apache.lucene.search.spans.SpanOrQuery;
 import org.apache.lucene.search.spans.SpanQuery;
 import org.apache.lucene.search.spans.SpanTermQuery;
 import org.apache.lucene.store.Directory;
@@ -54,6 +59,7 @@ import org.apache.lucene.util.QueryBuilder;
 import org.junit.After;
 import org.junit.Before;
 
+//TODO rename to reflect position sensitivity
 public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
 
   final FieldType fieldType;
@@ -150,6 +156,16 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
     String[] snippets = highlighter.highlight("body", query, topDocs);
 
     assertArrayEquals(new String[]{"<b>Yin</b> <b>yang</b>, <b>yin</b> gap yang"}, snippets);
+
+    // test the Passage only has 3 matches.  We don't want duplicates from "Yin" being in TermQuery & PhraseQuery.
+    highlighter.setFormatter(new PassageFormatter() {
+      @Override
+      public Object format(Passage[] passages, String content) {
+        return Arrays.toString(passages);
+      }
+    });
+    assertArrayEquals(new String[]{"[Passage[0-22]{yin[0-3],yang[4-8],yin[10-13]}score=2.4964213]"},
+        highlighter.highlight("body", query, topDocs));
   }
 
   public void testPhraseNotInDoc() throws IOException {
@@ -184,6 +200,16 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
     String[] snippets = highlighter.highlight("body", query, topDocs);
 
     assertArrayEquals(new String[]{"<b>alpha</b> <b>bravo</b> <b>charlie</b> - charlie bravo alpha"}, snippets);
+
+    // test the Passage only has 3 matches.  We don't want duplicates from both PhraseQuery
+    highlighter.setFormatter(new PassageFormatter() {
+      @Override
+      public Object format(Passage[] passages, String content) {
+        return Arrays.toString(passages);
+      }
+    });
+    assertArrayEquals(new String[]{"[Passage[0-41]{alpha[0-5],bravo[6-11],charlie[12-19]}score=3.931102]"},
+        highlighter.highlight("body", query, topDocs));
   }
 
   public void testSynonyms() throws IOException {
@@ -353,7 +379,7 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
         .add(phraseQuery, BooleanClause.Occur.MUST) // must match and it will
         .build();
     topDocs = searcher.search(query, 10);
-    assertEquals(1, topDocs.totalHits);
+    assertEquals(1, topDocs.totalHits.value);
     snippets = highlighter.highlight("body", query, topDocs, 2);
     assertEquals("one <b>bravo</b> <b>three</b>... <b>four</b> <b>bravo</b> six", snippets[0]);
   }
@@ -434,9 +460,38 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
         .add(proximityBoostingQuery, BooleanClause.Occur.SHOULD)
         .build();
     TopDocs topDocs = searcher.search(totalQuery, 10, Sort.INDEXORDER);
-    assertEquals(1, topDocs.totalHits);
+    assertEquals(1, topDocs.totalHits.value);
     String[] snippets = highlighter.highlight("body", totalQuery, topDocs);
     assertArrayEquals(new String[]{"There is no <b>accord</b> <b>and</b> <b>satisfaction</b> with this - <b>Consideration</b> of the <b>accord</b> is arbitrary."}, snippets);
+  }
+
+  // Tests that terms collected out of order due to being present in multiple Spans are handled correctly
+  // See LUCENE-8365
+  public void testReverseOrderSpanCollection() throws IOException {
+    // Processing order may depend on various optimizations or other weird factor.
+    indexWriter.addDocument(newDoc("alpha bravo - alpha charlie"));
+    indexWriter.addDocument(newDoc("alpha charlie - alpha bravo"));
+    initReaderSearcherHighlighter();
+
+    SpanNearQuery query = new SpanNearQuery(new SpanQuery[]{
+        new SpanNearQuery(new SpanQuery[]{
+            new SpanTermQuery(new Term("body", "alpha")),
+            new SpanTermQuery(new Term("body", "bravo"))
+        }, 0, true),
+        new SpanNearQuery(new SpanQuery[]{
+            new SpanTermQuery(new Term("body", "alpha")),
+            new SpanTermQuery(new Term("body", "charlie"))
+        }, 0, true)
+    }, 10, false);
+
+    TopDocs topDocs = searcher.search(query, 10, Sort.INDEXORDER);
+    String[] snippets = highlighter.highlight("body", query, topDocs);
+
+    assertArrayEquals(new String[]{
+            "<b>alpha</b> <b>bravo</b> - <b>alpha</b> <b>charlie</b>",
+            "<b>alpha</b> <b>charlie</b> - <b>alpha</b> <b>bravo</b>",
+        },
+        snippets);
   }
 
   private static class MyQuery extends Query {
@@ -448,8 +503,8 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher, boolean needsScores, float boost) throws IOException {
-      return wrapped.createWeight(searcher, needsScores, boost);
+    public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
+      return wrapped.createWeight(searcher, scoreMode, boost);
     }
 
     @Override
@@ -475,5 +530,68 @@ public class TestUnifiedHighlighterStrictPhrases extends LuceneTestCase {
     public int hashCode() {
       return wrapped.hashCode();
     }
+  }
+
+  // Ported from LUCENE-5455 (fixed in LUCENE-8121).  Also see LUCENE-2287.
+  public void testNestedSpanQueryHighlight() throws Exception {
+    // For a long time, the highlighters used to assume all query terms within the SpanQuery were valid at the Spans'
+    //   position range.  This would highlight occurrences of terms that were actually not matched by the query.
+    //   But now using the SpanCollector API we don't make this kind of mistake.
+    final String FIELD_NAME = "body";
+    final String indexedText = "x y z x z x a";
+    indexWriter.addDocument(newDoc(indexedText));
+    initReaderSearcherHighlighter();
+    TopDocs topDocs = new TopDocs(new TotalHits(1, TotalHits.Relation.EQUAL_TO), new ScoreDoc[]{new ScoreDoc(0, 1f)});
+
+    String expected = "<b>x</b> <b>y</b> <b>z</b> x z x <b>a</b>";
+    Query q = new SpanNearQuery(new SpanQuery[] {
+        new SpanNearQuery(new SpanQuery[] {
+            new SpanTermQuery(new Term(FIELD_NAME, "x")),
+            new SpanTermQuery(new Term(FIELD_NAME, "y")),
+            new SpanTermQuery(new Term(FIELD_NAME, "z"))}, 0, true),
+        new SpanTermQuery(new Term(FIELD_NAME, "a"))}, 10, false);
+    String observed = highlighter.highlight(FIELD_NAME, q, topDocs)[0];
+    if (VERBOSE) System.out.println("Expected: \"" + expected + "\n" + "Observed: \"" + observed);
+    assertEquals("Nested SpanNear query not properly highlighted.", expected, observed);
+
+    expected = "x <b>y</b> <b>z</b> <b>x</b> <b>z</b> x <b>a</b>";
+    q = new SpanNearQuery(new SpanQuery[] {
+        new SpanOrQuery(
+            new SpanNearQuery(new SpanQuery[] {
+                new SpanTermQuery(new Term(FIELD_NAME, "x")),
+                new SpanTermQuery(new Term(FIELD_NAME, "z"))}, 0, true),
+            new SpanNearQuery(new SpanQuery[] {
+                new SpanTermQuery(new Term(FIELD_NAME, "y")),
+                new SpanTermQuery(new Term(FIELD_NAME, "z"))}, 0, true)),
+        new SpanOrQuery(
+            new SpanTermQuery(new Term(FIELD_NAME, "a")),
+            new SpanTermQuery(new Term(FIELD_NAME, "b")))}, 10, false);
+    observed = highlighter.highlight(FIELD_NAME, q, topDocs)[0];
+    if (VERBOSE) System.out.println("Expected: \"" + expected + "\n" + "Observed: \"" + observed);
+    assertEquals("Nested SpanNear query within SpanOr not properly highlighted.", expected, observed);
+
+    expected = "x <b>y</b> <b>z</b> <b>x</b> <b>z</b> x <b>a</b>";
+    q = new SpanNearQuery(new SpanQuery[] {
+        new SpanNearQuery(new SpanQuery[] {
+            new SpanMultiTermQueryWrapper<>(new WildcardQuery(new Term(FIELD_NAME, "*"))),
+            new SpanTermQuery(new Term(FIELD_NAME, "z"))}, 0, true),
+        new SpanTermQuery(new Term(FIELD_NAME, "a"))}, 10, false);
+    observed = highlighter.highlight(FIELD_NAME, q, topDocs)[0];
+    if (VERBOSE) System.out.println("Expected: \"" + expected + "\n" + "Observed: \"" + observed);
+    assertEquals("Nested SpanNear query with wildcard not properly highlighted.", expected, observed);
+
+    expected = "<b>x</b> <b>y</b> z x z x <b>a</b>";
+    q = new SpanNearQuery(new SpanQuery[] {
+        new SpanOrQuery(
+            new SpanNearQuery(new SpanQuery[] {
+                new SpanTermQuery(new Term(FIELD_NAME, "x")),
+                new SpanTermQuery(new Term(FIELD_NAME, "y"))}, 0, true),
+            new SpanNearQuery(new SpanQuery[] { //No hit span query
+                new SpanTermQuery(new Term(FIELD_NAME, "z")),
+                new SpanTermQuery(new Term(FIELD_NAME, "a"))}, 0, true)),
+        new SpanTermQuery(new Term(FIELD_NAME, "a"))}, 10, false);
+    observed = highlighter.highlight(FIELD_NAME, q, topDocs)[0];
+    if (VERBOSE) System.out.println("Expected: \"" + expected + "\n" + "Observed: \"" + observed);
+    assertEquals("Nested SpanNear query within SpanOr not properly highlighted.", expected, observed);
   }
 }

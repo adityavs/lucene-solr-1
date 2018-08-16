@@ -16,9 +16,6 @@
  */
 package org.apache.solr.handler;
 
-import static org.apache.solr.common.params.CommonParams.ID;
-import static org.apache.solr.common.params.CommonParams.SORT;
-
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
@@ -33,63 +30,7 @@ import org.apache.solr.client.solrj.io.ModelCache;
 import org.apache.solr.client.solrj.io.SolrClientCache;
 import org.apache.solr.client.solrj.io.Tuple;
 import org.apache.solr.client.solrj.io.comp.StreamComparator;
-import org.apache.solr.client.solrj.io.eval.*;
-import org.apache.solr.client.solrj.io.graph.GatherNodesStream;
-import org.apache.solr.client.solrj.io.graph.ShortestPathStream;
-import org.apache.solr.client.solrj.io.ops.ConcatOperation;
-import org.apache.solr.client.solrj.io.ops.DistinctOperation;
-import org.apache.solr.client.solrj.io.ops.GroupOperation;
-import org.apache.solr.client.solrj.io.ops.ReplaceOperation;
-import org.apache.solr.client.solrj.io.stream.CalculatorStream;
-import org.apache.solr.client.solrj.io.stream.CartesianProductStream;
-import org.apache.solr.client.solrj.io.stream.CellStream;
-import org.apache.solr.client.solrj.io.stream.CloudSolrStream;
-import org.apache.solr.client.solrj.io.stream.CommitStream;
-import org.apache.solr.client.solrj.io.stream.ComplementStream;
-import org.apache.solr.client.solrj.io.stream.DaemonStream;
-import org.apache.solr.client.solrj.io.stream.EchoStream;
-import org.apache.solr.client.solrj.io.stream.EvalStream;
-import org.apache.solr.client.solrj.io.stream.ExceptionStream;
-import org.apache.solr.client.solrj.io.stream.ExecutorStream;
-import org.apache.solr.client.solrj.io.stream.FacetStream;
-import org.apache.solr.client.solrj.io.stream.FeaturesSelectionStream;
-import org.apache.solr.client.solrj.io.stream.FetchStream;
-import org.apache.solr.client.solrj.io.stream.GetStream;
-import org.apache.solr.client.solrj.io.stream.HashJoinStream;
-import org.apache.solr.client.solrj.io.stream.HavingStream;
-import org.apache.solr.client.solrj.io.stream.InnerJoinStream;
-import org.apache.solr.client.solrj.io.stream.IntersectStream;
-import org.apache.solr.client.solrj.io.stream.JDBCStream;
-import org.apache.solr.client.solrj.io.stream.KnnStream;
-import org.apache.solr.client.solrj.io.stream.LeftOuterJoinStream;
-import org.apache.solr.client.solrj.io.stream.LetStream;
-import org.apache.solr.client.solrj.io.stream.ListStream;
-import org.apache.solr.client.solrj.io.stream.MergeStream;
-import org.apache.solr.client.solrj.io.stream.ModelStream;
-import org.apache.solr.client.solrj.io.stream.NullStream;
-import org.apache.solr.client.solrj.io.stream.OuterHashJoinStream;
-import org.apache.solr.client.solrj.io.stream.ParallelStream;
-import org.apache.solr.client.solrj.io.stream.PlotStream;
-import org.apache.solr.client.solrj.io.stream.PriorityStream;
-import org.apache.solr.client.solrj.io.stream.RandomStream;
-import org.apache.solr.client.solrj.io.stream.RankStream;
-import org.apache.solr.client.solrj.io.stream.ReducerStream;
-import org.apache.solr.client.solrj.io.stream.RollupStream;
-import org.apache.solr.client.solrj.io.stream.ScoreNodesStream;
-import org.apache.solr.client.solrj.io.stream.SelectStream;
-import org.apache.solr.client.solrj.io.stream.ShuffleStream;
-import org.apache.solr.client.solrj.io.stream.SignificantTermsStream;
-import org.apache.solr.client.solrj.io.stream.SortStream;
-import org.apache.solr.client.solrj.io.stream.SqlStream;
-import org.apache.solr.client.solrj.io.stream.StatsStream;
-import org.apache.solr.client.solrj.io.stream.StreamContext;
-import org.apache.solr.client.solrj.io.stream.TextLogitStream;
-import org.apache.solr.client.solrj.io.stream.TimeSeriesStream;
-import org.apache.solr.client.solrj.io.stream.TopicStream;
-import org.apache.solr.client.solrj.io.stream.TupStream;
-import org.apache.solr.client.solrj.io.stream.TupleStream;
-import org.apache.solr.client.solrj.io.stream.UniqueStream;
-import org.apache.solr.client.solrj.io.stream.UpdateStream;
+import org.apache.solr.client.solrj.io.stream.*;
 import org.apache.solr.client.solrj.io.stream.expr.Explanation;
 import org.apache.solr.client.solrj.io.stream.expr.Explanation.ExpressionType;
 import org.apache.solr.client.solrj.io.stream.expr.Expressible;
@@ -98,11 +39,6 @@ import org.apache.solr.client.solrj.io.stream.expr.StreamExpression;
 import org.apache.solr.client.solrj.io.stream.expr.StreamExpressionNamedParameter;
 import org.apache.solr.client.solrj.io.stream.expr.StreamExpressionParser;
 import org.apache.solr.client.solrj.io.stream.expr.StreamFactory;
-import org.apache.solr.client.solrj.io.stream.metrics.CountMetric;
-import org.apache.solr.client.solrj.io.stream.metrics.MaxMetric;
-import org.apache.solr.client.solrj.io.stream.metrics.MeanMetric;
-import org.apache.solr.client.solrj.io.stream.metrics.MinMetric;
-import org.apache.solr.client.solrj.io.stream.metrics.SumMetric;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -119,12 +55,17 @@ import org.apache.solr.util.plugin.SolrCoreAware;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.solr.common.params.CommonParams.ID;
+
+/**
+ * @since 5.1.0
+ */
 public class StreamHandler extends RequestHandlerBase implements SolrCoreAware, PermissionNameProvider {
 
   static SolrClientCache clientCache = new SolrClientCache();
   static ModelCache modelCache = null;
-  private StreamFactory streamFactory = new StreamFactory();
-  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  private SolrDefaultStreamFactory streamFactory = new SolrDefaultStreamFactory();
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private String coreName;
   private Map<String,DaemonStream> daemons = Collections.synchronizedMap(new HashMap());
 
@@ -163,207 +104,7 @@ public class StreamHandler extends RequestHandlerBase implements SolrCoreAware, 
           defaultZkhost,
           clientCache);
     }
-
-    streamFactory
-        // source streams
-        .withFunctionName("search", CloudSolrStream.class)
-        .withFunctionName("facet", FacetStream.class)
-        .withFunctionName("update", UpdateStream.class)
-        .withFunctionName("jdbc", JDBCStream.class)
-        .withFunctionName("topic", TopicStream.class)
-        .withFunctionName("commit", CommitStream.class)
-        .withFunctionName("random", RandomStream.class)
-        .withFunctionName("knn", KnnStream.class)
-
-        // decorator streams
-        .withFunctionName("merge", MergeStream.class)
-        .withFunctionName("unique", UniqueStream.class)
-        .withFunctionName("top", RankStream.class)
-        .withFunctionName("group", GroupOperation.class)
-        .withFunctionName("reduce", ReducerStream.class)
-        .withFunctionName("parallel", ParallelStream.class)
-        .withFunctionName("rollup", RollupStream.class)
-        .withFunctionName("stats", StatsStream.class)
-        .withFunctionName("innerJoin", InnerJoinStream.class)
-        .withFunctionName("leftOuterJoin", LeftOuterJoinStream.class)
-        .withFunctionName("hashJoin", HashJoinStream.class)
-        .withFunctionName("outerHashJoin", OuterHashJoinStream.class)
-        .withFunctionName("intersect", IntersectStream.class)
-        .withFunctionName("complement", ComplementStream.class)
-        .withFunctionName(SORT, SortStream.class)
-        .withFunctionName("train", TextLogitStream.class)
-        .withFunctionName("features", FeaturesSelectionStream.class)
-        .withFunctionName("daemon", DaemonStream.class)
-        .withFunctionName("shortestPath", ShortestPathStream.class)
-        .withFunctionName("gatherNodes", GatherNodesStream.class)
-        .withFunctionName("nodes", GatherNodesStream.class)
-        .withFunctionName("select", SelectStream.class)
-        .withFunctionName("shortestPath", ShortestPathStream.class)
-        .withFunctionName("gatherNodes", GatherNodesStream.class)
-        .withFunctionName("nodes", GatherNodesStream.class)
-        .withFunctionName("scoreNodes", ScoreNodesStream.class)
-        .withFunctionName("model", ModelStream.class)
-        .withFunctionName("classify", ClassifyStream.class)
-        .withFunctionName("fetch", FetchStream.class)
-        .withFunctionName("executor", ExecutorStream.class)
-        .withFunctionName("null", NullStream.class)
-        .withFunctionName("priority", PriorityStream.class)
-        .withFunctionName("significantTerms", SignificantTermsStream.class)
-        .withFunctionName("cartesianProduct", CartesianProductStream.class)
-        .withFunctionName("shuffle", ShuffleStream.class)
-        .withFunctionName("calc", CalculatorStream.class)
-        .withFunctionName("eval", EvalStream.class)
-        .withFunctionName("echo", EchoStream.class)
-        .withFunctionName("cell", CellStream.class)
-        .withFunctionName("list", ListStream.class)
-        .withFunctionName("let", LetStream.class)
-        .withFunctionName("get", GetStream.class)
-        .withFunctionName("timeseries", TimeSeriesStream.class)
-        .withFunctionName("tuple", TupStream.class)
-        .withFunctionName("sql", SqlStream.class)
-
-        // metrics
-        .withFunctionName("min", MinMetric.class)
-        .withFunctionName("max", MaxMetric.class)
-        .withFunctionName("avg", MeanMetric.class)
-        .withFunctionName("sum", SumMetric.class)
-        .withFunctionName("count", CountMetric.class)
-
-        // tuple manipulation operations
-        .withFunctionName("replace", ReplaceOperation.class)
-        .withFunctionName("concat", ConcatOperation.class)
-
-        // stream reduction operations
-        .withFunctionName("group", GroupOperation.class)
-        .withFunctionName("distinct", DistinctOperation.class)
-        .withFunctionName("having", HavingStream.class)
-
-        // Stream Evaluators
-        .withFunctionName("val", RawValueEvaluator.class)
-
-        // New Evaluators
-        .withFunctionName("anova", AnovaEvaluator.class)
-        .withFunctionName("array", ArrayEvaluator.class)
-        .withFunctionName("col", ColumnEvaluator.class)
-        .withFunctionName("conv", ConvolutionEvaluator.class)
-        .withFunctionName("copyOfRange", CopyOfRangeEvaluator.class)
-        .withFunctionName("copyOf", CopyOfEvaluator.class)
-        .withFunctionName("cov", CovarianceEvaluator.class)
-        .withFunctionName("corr", CorrelationEvaluator.class)
-        .withFunctionName("kendallsCorr", KendallsCorrelationEvaluator.class)
-        .withFunctionName("spearmansCorr", SpearmansCorrelationEvaluator.class)
-        .withFunctionName("describe", DescribeEvaluator.class)
-        .withFunctionName("distance", EuclideanDistanceEvaluator.class)
-        .withFunctionName("manhattanDistance", ManhattanDistanceEvaluator.class)
-        .withFunctionName("earthMoversDistance", EarthMoversDistanceEvaluator.class)
-        .withFunctionName("canberraDistance", CanberraDistanceEvaluator.class)
-        .withFunctionName("chebyshevDistance", ChebyshevDistanceEvaluator.class)
-        .withFunctionName("empiricalDistribution", EmpiricalDistributionEvaluator.class)
-        .withFunctionName("finddelay", FindDelayEvaluator.class)
-        .withFunctionName("hist", HistogramEvaluator.class)
-        .withFunctionName("length", LengthEvaluator.class)
-        .withFunctionName("movingAvg", MovingAverageEvaluator.class)
-        .withFunctionName("normalize", NormalizeEvaluator.class)
-        .withFunctionName("percentile", PercentileEvaluator.class)
-        .withFunctionName("predict", PredictEvaluator.class)
-        .withFunctionName("rank", RankEvaluator.class)
-        .withFunctionName("regress", RegressionEvaluator.class)
-        .withFunctionName("rev", ReverseEvaluator.class)
-        .withFunctionName("scale", ScaleEvaluator.class)
-        .withFunctionName("sequence", SequenceEvaluator.class)
-        .withFunctionName("addAll", AppendEvaluator.class)
-        .withFunctionName("append", AppendEvaluator.class)
-        .withFunctionName("residuals", ResidualsEvaluator.class)
-        .withFunctionName("plot", PlotStream.class)
-        .withFunctionName("normalDistribution", NormalDistributionEvaluator.class)
-        .withFunctionName("uniformDistribution", UniformDistributionEvaluator.class)
-        .withFunctionName("sample", SampleEvaluator.class)
-        .withFunctionName("kolmogorovSmirnov", KolmogorovSmirnovEvaluator.class)
-        .withFunctionName("ks", KolmogorovSmirnovEvaluator.class)
-        .withFunctionName("asc", AscEvaluator.class)
-        .withFunctionName("cumulativeProbability", CumulativeProbabilityEvaluator.class)
-        .withFunctionName("ebeAdd", EBEAddEvaluator.class)
-        .withFunctionName("ebeSubtract", EBESubtractEvaluator.class)
-        .withFunctionName("ebeMultiply", EBEMultiplyEvaluator.class)
-        .withFunctionName("ebeDivide", EBEDivideEvaluator.class)
-        .withFunctionName("dotProduct", DotProductEvaluator.class)
-        .withFunctionName("cosineSimilarity", CosineSimilarityEvaluator.class)
-        .withFunctionName("freqTable", FrequencyTableEvaluator.class)
-        .withFunctionName("uniformIntegerDistribution", UniformIntegerDistributionEvaluator.class)
-        .withFunctionName("binomialDistribution", BinomialDistributionEvaluator.class)
-        .withFunctionName("poissonDistribution", PoissonDistributionEvaluator.class)
-        .withFunctionName("enumeratedDistribution", EnumeratedDistributionEvaluator.class)
-        .withFunctionName("probability", ProbabilityEvaluator.class)
-        .withFunctionName("sumDifference", SumDifferenceEvaluator.class)
-        .withFunctionName("meanDifference", MeanDifferenceEvaluator.class)
-        .withFunctionName("primes", PrimesEvaluator.class)
-        .withFunctionName("factorial", FactorialEvaluator.class)
-        .withFunctionName("movingMedian", MovingMedianEvaluator.class)
-        .withFunctionName("monteCarlo", MonteCarloEvaluator.class)
-        .withFunctionName("constantDistribution", ConstantDistributionEvaluator.class)
-        .withFunctionName("weibullDistribution", WeibullDistributionEvaluator.class)
-        .withFunctionName("mean", MeanEvaluator.class)
-        .withFunctionName("mode", ModeEvaluator.class)
-        .withFunctionName("logNormalDistribution", LogNormalDistributionEvaluator.class)
-        .withFunctionName("zipFDistribution", ZipFDistributionEvaluator.class)
-        .withFunctionName("gammaDistribution", GammaDistributionEvaluator.class)
-        .withFunctionName("betaDistribution", BetaDistributionEvaluator.class)
-
-        // Boolean Stream Evaluators
-
-        .withFunctionName("and", AndEvaluator.class)
-        .withFunctionName("eor", ExclusiveOrEvaluator.class)
-        .withFunctionName("eq", EqualToEvaluator.class)
-        .withFunctionName("gt", GreaterThanEvaluator.class)
-        .withFunctionName("gteq", GreaterThanEqualToEvaluator.class)
-        .withFunctionName("lt", LessThanEvaluator.class)
-        .withFunctionName("lteq", LessThanEqualToEvaluator.class)
-        .withFunctionName("not", NotEvaluator.class)
-        .withFunctionName("or", OrEvaluator.class)
-
-        // Date Time Evaluators
-        .withFunctionName(TemporalEvaluatorYear.FUNCTION_NAME, TemporalEvaluatorYear.class)
-        .withFunctionName(TemporalEvaluatorMonth.FUNCTION_NAME, TemporalEvaluatorMonth.class)
-        .withFunctionName(TemporalEvaluatorDay.FUNCTION_NAME, TemporalEvaluatorDay.class)
-        .withFunctionName(TemporalEvaluatorDayOfYear.FUNCTION_NAME, TemporalEvaluatorDayOfYear.class)
-        .withFunctionName(TemporalEvaluatorHour.FUNCTION_NAME, TemporalEvaluatorHour.class)
-        .withFunctionName(TemporalEvaluatorMinute.FUNCTION_NAME, TemporalEvaluatorMinute.class)
-        .withFunctionName(TemporalEvaluatorSecond.FUNCTION_NAME, TemporalEvaluatorSecond.class)
-        .withFunctionName(TemporalEvaluatorEpoch.FUNCTION_NAME, TemporalEvaluatorEpoch.class)
-        .withFunctionName(TemporalEvaluatorWeek.FUNCTION_NAME, TemporalEvaluatorWeek.class)
-        .withFunctionName(TemporalEvaluatorQuarter.FUNCTION_NAME, TemporalEvaluatorQuarter.class)
-        .withFunctionName(TemporalEvaluatorDayOfQuarter.FUNCTION_NAME, TemporalEvaluatorDayOfQuarter.class)
-
-        // Number Stream Evaluators
-        .withFunctionName("abs", AbsoluteValueEvaluator.class)
-        .withFunctionName("add", AddEvaluator.class)
-        .withFunctionName("div", DivideEvaluator.class)
-        .withFunctionName("mult", MultiplyEvaluator.class)
-        .withFunctionName("sub", SubtractEvaluator.class)
-        .withFunctionName("log", NaturalLogEvaluator.class)
-        .withFunctionName("pow", PowerEvaluator.class)
-        .withFunctionName("mod", ModuloEvaluator.class)
-        .withFunctionName("ceil", CeilingEvaluator.class)
-        .withFunctionName("floor", FloorEvaluator.class)
-        .withFunctionName("sin", SineEvaluator.class)
-        .withFunctionName("asin", ArcSineEvaluator.class)
-        .withFunctionName("sinh", HyperbolicSineEvaluator.class)
-        .withFunctionName("cos", CosineEvaluator.class)
-        .withFunctionName("acos", ArcCosineEvaluator.class)
-        .withFunctionName("cosh", HyperbolicCosineEvaluator.class)
-        .withFunctionName("tan", TangentEvaluator.class)
-        .withFunctionName("atan", ArcTangentEvaluator.class)
-        .withFunctionName("tanh", HyperbolicTangentEvaluator.class)
-        .withFunctionName("round", RoundEvaluator.class)
-        .withFunctionName("sqrt", SquareRootEvaluator.class)
-        .withFunctionName("cbrt", CubedRootEvaluator.class)
-        .withFunctionName("coalesce", CoalesceEvaluator.class)
-        .withFunctionName("uuid", UuidEvaluator.class)
-
-        // Conditional Stream Evaluators
-        .withFunctionName("if", IfThenElseEvaluator.class)
-        .withFunctionName("analyze", AnalyzeEvaluator.class)
-        .withFunctionName("convert", ConversionEvaluator.class);
+    streamFactory.withSolrResourceLoader(core.getResourceLoader());
 
     // This pulls all the overrides and additions from the config
     List<PluginInfo> pluginInfos = core.getSolrConfig().getPluginInfos(Expressible.class.getName());
@@ -409,7 +150,7 @@ public class StreamHandler extends RequestHandlerBase implements SolrCoreAware, 
     } catch (Exception e) {
       // Catch exceptions that occur while the stream is being created. This will include streaming expression parse
       // rules.
-      SolrException.log(logger, e);
+      SolrException.log(log, e);
       rsp.add("result-set", new DummyErrorStream(e));
 
       return;

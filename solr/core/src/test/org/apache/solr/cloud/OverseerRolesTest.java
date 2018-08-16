@@ -28,6 +28,7 @@ import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.cloud.overseer.OverseerAction;
 import org.apache.solr.common.cloud.ZkNodeProps;
+import org.apache.solr.common.util.TimeSource;
 import org.apache.solr.common.util.Utils;
 import org.apache.solr.util.TimeOut;
 import org.apache.zookeeper.KeeperException;
@@ -51,7 +52,7 @@ public class OverseerRolesTest extends SolrCloudTestCase {
   }
 
   private void waitForNewOverseer(int seconds, Predicate<String> state) throws Exception {
-    TimeOut timeout = new TimeOut(seconds, TimeUnit.SECONDS);
+    TimeOut timeout = new TimeOut(seconds, TimeUnit.SECONDS, TimeSource.NANO_TIME);
     String current = null;
     while (timeout.hasTimedOut() == false) {
       current = OverseerCollectionConfigSetProcessor.getLeaderNode(zkClient());
@@ -84,6 +85,7 @@ public class OverseerRolesTest extends SolrCloudTestCase {
   }
 
   @Test
+  //commented 2-Aug-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 04-May-2018
   public void testOverseerRole() throws Exception {
 
     logOverseerState();

@@ -33,15 +33,18 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.CoreAdminParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.handler.admin.CoreAdminHandler;
+import org.apache.solr.handler.admin.MetricsHandler;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.servlet.SolrDispatchFilter;
 import org.apache.solr.update.AddUpdateCommand;
 import org.apache.solr.update.CommitUpdateCommand;
+import org.apache.solr.update.DirectUpdateHandler2;
 import org.apache.solr.update.UpdateHandler;
 import org.apache.solr.util.ReadOnlyCoresLocator;
 import org.junit.BeforeClass;
@@ -238,6 +241,19 @@ public class TestLazyCores extends SolrTestCaseJ4 {
       checkInCores(cc, "collection1", "collection4", "collection5", "collection6", "collection7",
           "collection8", "collection9");
       checkNotInCores(cc, Arrays.asList("collection2", "collection3"));
+
+      // verify that getting metrics from an unloaded core doesn't cause exceptions (SOLR-12541)
+      MetricsHandler handler = new MetricsHandler(h.getCoreContainer());
+
+      SolrQueryResponse resp = new SolrQueryResponse();
+      handler.handleRequest(makeReq(core1, CommonParams.QT, "/admin/metrics"), resp);
+      NamedList values = resp.getValues();
+      assertNotNull(values.get("metrics"));
+      values = (NamedList) values.get("metrics");
+      NamedList nl = (NamedList) values.get("solr.core.collection2");
+      assertNotNull(nl);
+      Object o = nl.get("REPLICATION./replication.indexPath");
+      assertNotNull(o);
 
 
       // Note decrementing the count when the core is removed from the lazyCores list is appropriate, since the
@@ -786,6 +802,8 @@ public class TestLazyCores extends SolrTestCaseJ4 {
   // Cores 2, 3, 6, 7, 8, 9 are transient
   @Test
   public void testNoCommit() throws Exception {
+    DirectUpdateHandler2.commitOnClose = true;
+
     CoreContainer cc = init();
     String[] coreList = new String[]{
         "collection2",

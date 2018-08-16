@@ -53,7 +53,6 @@ import static org.apache.solr.common.params.FacetParams.FACET_OVERREQUEST_RATIO;
 import static org.apache.solr.common.params.FacetParams.FACET_PIVOT;
 import static org.apache.solr.common.params.FacetParams.FACET_PIVOT_MINCOUNT;
 import static org.apache.solr.common.params.FacetParams.FACET_SORT;
-import static org.apache.solr.common.params.FacetParams.FACET_DISTRIB_MCO;
 
 /**
  * <p>
@@ -85,8 +84,6 @@ public class TestCloudPivotFacet extends AbstractFullDistribZkTestBase {
   // param used by test purely for tracing & validation
   private static String TRACE_MIN = "_test_min";
   // param used by test purely for tracing & validation
-  private static String TRACE_DISTRIB_MIN = "_test_distrib_min";
-  // param used by test purely for tracing & validation
   private static String TRACE_MISS = "_test_miss";
   // param used by test purely for tracing & validation
   private static String TRACE_SORT = "_test_sort";
@@ -110,6 +107,7 @@ public class TestCloudPivotFacet extends AbstractFullDistribZkTestBase {
   }
 
   @Test
+  //commented 2-Aug-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // 28-June-2018
   public void test() throws Exception {
 
     sanityCheckAssertNumerics();
@@ -199,12 +197,6 @@ public class TestCloudPivotFacet extends AbstractFullDistribZkTestBase {
         baseP.add(TRACE_MIN, min);
       }
       
-      if (random().nextBoolean()) {
-        pivotP.add(FACET_DISTRIB_MCO, "true");
-        // trace param for validation
-        baseP.add(TRACE_DISTRIB_MIN, "true");
-      }
-
       if (random().nextBoolean()) {
         String missing = ""+random().nextBoolean();
         pivotP.add(FACET_MISSING, missing);
@@ -761,25 +753,25 @@ public class TestCloudPivotFacet extends AbstractFullDistribZkTestBase {
   private void sanityCheckAssertNumerics() {
     
     assertNumerics("Null?", null, null);
-    assertNumerics("large a", 
-                   new Double(2.3005390038169265E9), 
-                   new Double(2.300539003816927E9));
+    assertNumerics("large a",
+        2.3005390038169265E9,
+        2.300539003816927E9);
     assertNumerics("large b",
-                   new Double(1.2722582464444444E9),
-                   new Double(1.2722582464444442E9));
-    assertNumerics("small", 
-                   new Double(2.3005390038169265E-9), 
-                   new Double(2.300539003816927E-9));
+        1.2722582464444444E9,
+        1.2722582464444442E9);
+    assertNumerics("small",
+        2.3005390038169265E-9,
+        2.300539003816927E-9);
     
-    assertNumerics("large a negative", 
-                   new Double(-2.3005390038169265E9), 
-                   new Double(-2.300539003816927E9));
+    assertNumerics("large a negative",
+        -2.3005390038169265E9,
+        -2.300539003816927E9);
     assertNumerics("large b negative",
-                   new Double(-1.2722582464444444E9),
-                   new Double(-1.2722582464444442E9));
-    assertNumerics("small negative", 
-                   new Double(-2.3005390038169265E-9), 
-                   new Double(-2.300539003816927E-9));
+        -1.2722582464444444E9,
+        -1.2722582464444442E9);
+    assertNumerics("small negative",
+        -2.3005390038169265E-9,
+        -2.300539003816927E-9);
     
     assertNumerics("high long", Long.MAX_VALUE, Long.MAX_VALUE);
     assertNumerics("high int", Integer.MAX_VALUE, Integer.MAX_VALUE);
@@ -812,15 +804,15 @@ public class TestCloudPivotFacet extends AbstractFullDistribZkTestBase {
     } catch (AssertionError e) {}
   
     try {
-      assertNumerics("diff", 
-                     new Double(2.3005390038169265E9), 
-                     new Double(2.267272520100462E9));
+      assertNumerics("diff",
+          2.3005390038169265E9,
+          2.267272520100462E9);
       throw new RuntimeException("did not get assertion failure when args are big & too diff");
     } catch (AssertionError e) {}
     try {
-      assertNumerics("diff", 
-                     new Double(2.3005390038169265E-9), 
-                     new Double(2.267272520100462E-9));
+      assertNumerics("diff",
+          2.3005390038169265E-9,
+          2.267272520100462E-9);
       throw new RuntimeException("did not get assertion failure when args are small & too diff");
     } catch (AssertionError e) {}
   

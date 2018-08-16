@@ -246,11 +246,11 @@ public class MultipleAdditiveTreesModel extends LTRScoringModel {
     private RegressionTreeNode root;
 
     public void setWeight(float weight) {
-      this.weight = new Float(weight);
+      this.weight = weight;
     }
 
     public void setWeight(String weight) {
-      this.weight = new Float(weight);
+      this.weight = Float.valueOf(weight);
     }
 
     public void setRoot(Object root) {
@@ -345,7 +345,7 @@ public class MultipleAdditiveTreesModel extends LTRScoringModel {
     final float[] fv = new float[featureExplanations.size()];
     int index = 0;
     for (final Explanation featureExplain : featureExplanations) {
-      fv[index] = featureExplain.getValue();
+      fv[index] = featureExplain.getValue().floatValue();
       index++;
     }
 

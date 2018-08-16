@@ -27,20 +27,21 @@ import java.util.Map;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.queries.function.BoostedQuery;
+import org.apache.lucene.queries.function.FunctionScoreQuery;
 import org.apache.lucene.queries.function.FunctionValues;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.queries.function.docvalues.BoolDocValues;
 import org.apache.lucene.queries.function.docvalues.DoubleDocValues;
 import org.apache.lucene.queries.function.docvalues.LongDocValues;
 import org.apache.lucene.queries.function.valuesource.*;
+import org.apache.lucene.queries.payloads.PayloadDecoder;
 import org.apache.lucene.queries.payloads.PayloadFunction;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.spell.JaroWinklerDistance;
-import org.apache.lucene.search.spell.LevensteinDistance;
+import org.apache.lucene.search.spell.LevenshteinDistance;
 import org.apache.lucene.search.spell.NGramDistance;
 import org.apache.lucene.search.spell.StringDistance;
 import org.apache.lucene.util.BytesRefBuilder;
@@ -49,6 +50,7 @@ import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.schema.CurrencyFieldType;
 import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.StrField;
 import org.apache.solr.schema.TextField;
@@ -61,10 +63,13 @@ import org.apache.solr.search.facet.PercentileAgg;
 import org.apache.solr.search.facet.StddevAgg;
 import org.apache.solr.search.facet.SumAgg;
 import org.apache.solr.search.facet.SumsqAgg;
+import org.apache.solr.search.facet.RelatednessAgg;
 import org.apache.solr.search.facet.UniqueAgg;
+import org.apache.solr.search.facet.UniqueBlockAgg;
 import org.apache.solr.search.facet.VarianceAgg;
 import org.apache.solr.search.function.CollapseScoreFunction;
 import org.apache.solr.search.function.ConcatStringFunction;
+import org.apache.solr.search.function.EqualFunction;
 import org.apache.solr.search.function.OrdFieldSource;
 import org.apache.solr.search.function.ReverseOrdFieldSource;
 import org.apache.solr.search.function.SolrComparisonBoolFunction;
@@ -77,7 +82,6 @@ import org.apache.solr.search.function.distance.StringDistanceFunction;
 import org.apache.solr.search.function.distance.VectorDistanceFunction;
 import org.apache.solr.search.join.ChildFieldValueSourceParser;
 import org.apache.solr.util.DateMathParser;
-import org.apache.solr.util.PayloadDecoder;
 import org.apache.solr.util.PayloadUtils;
 import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 import org.locationtech.spatial4j.distance.DistanceUtils;
@@ -325,8 +329,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         Query q = fp.parseNestedQuery();
         ValueSource vs = fp.parseValueSource();
-        BoostedQuery bq = new BoostedQuery(q, vs);
-        return new QueryValueSource(bq, 0.0f);
+        return new QueryValueSource(FunctionScoreQuery.boostByValue(q, vs.asDoubleValuesSource()), 0.0f);
       }
     });
     addParser("joindf", new ValueSourceParser() {
@@ -405,7 +408,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
         if (distClass.equalsIgnoreCase("jw")) {
           dist = new JaroWinklerDistance();
         } else if (distClass.equalsIgnoreCase("edit")) {
-          dist = new LevensteinDistance();
+          dist = new LevenshteinDistance();
         } else if (distClass.equalsIgnoreCase("ngram")) {
           int ngram = 2;
           if (fp.hasMoreArguments()) {
@@ -737,8 +740,8 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Invalid payload function: " + func);
         }
 
-        FieldType fieldType = fp.getReq().getCore().getLatestSchema().getFieldTypeNoEx(tinfo.field);
-        PayloadDecoder decoder = PayloadUtils.getPayloadDecoder(fieldType);
+        IndexSchema schema = fp.getReq().getCore().getLatestSchema();
+        PayloadDecoder decoder = schema.getPayloadDecoder(tinfo.field);
 
         if (decoder==null) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No payload decoder found for field: " + tinfo.field);
@@ -922,7 +925,7 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
         ValueSource lhsValSource = fp.parseValueSource();
         ValueSource rhsValSource = fp.parseValueSource();
 
-        return new SolrComparisonBoolFunction(lhsValSource, rhsValSource, "eq", (cmp) -> cmp == 0);
+        return new EqualFunction(lhsValSource, rhsValSource, "eq");
       }
     });
 
@@ -960,6 +963,13 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
       @Override
       public ValueSource parse(FunctionQParser fp) throws SyntaxError {
         return new UniqueAgg(fp.parseArg());
+      }
+    });
+
+    addParser("agg_uniqueBlock", new ValueSourceParser() {
+      @Override
+      public ValueSource parse(FunctionQParser fp) throws SyntaxError {
+        return new UniqueBlockAgg(fp.parseArg());
       }
     });
 
@@ -1029,6 +1039,19 @@ public abstract class ValueSourceParser implements NamedListInitializedPlugin {
     });
 
     addParser("agg_percentile", new PercentileAgg.Parser());
+    
+    addParser("agg_" + RelatednessAgg.NAME, new ValueSourceParser() {
+      @Override
+      public ValueSource parse(FunctionQParser fp) throws SyntaxError {
+        // TODO: (fore & back)-ground should be optional -- use hasMoreArguments
+        // if only one arg, assume it's the foreground
+        // (background is the one that will most commonly just be "*:*")
+        // see notes in RelatednessAgg constructor about why we don't do this yet
+        RelatednessAgg agg = new RelatednessAgg(fp.parseNestedQuery(), fp.parseNestedQuery());
+        agg.setOpts(fp);
+        return agg;
+      }
+    });
     
     addParser("childfield", new ChildFieldValueSourceParser());
   }

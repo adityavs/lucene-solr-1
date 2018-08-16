@@ -87,6 +87,7 @@ import org.junit.BeforeClass;
   Verify we can read previous versions' indexes, do searches
   against them, and add documents to them.
 */
+// See: https://issues.apache.org/jira/browse/SOLR-12028 Tests cannot remove files on Windows machines occasionally
 public class TestBackwardsCompatibility extends LuceneTestCase {
 
   // Backcompat index generation, described below, is mostly automated in: 
@@ -287,7 +288,21 @@ public class TestBackwardsCompatibility extends LuceneTestCase {
 
   final static String[] oldNames = {
     "7.0.0-cfs",
-    "7.0.0-nocfs"
+    "7.0.0-nocfs",
+    "7.0.1-cfs",
+    "7.0.1-nocfs",
+    "7.1.0-cfs",
+    "7.1.0-nocfs",
+    "7.2.0-cfs",
+    "7.2.0-nocfs",
+    "7.2.1-cfs",
+    "7.2.1-nocfs",
+    "7.3.0-cfs",
+    "7.3.0-nocfs",
+    "7.3.1-cfs",
+    "7.3.1-nocfs",
+    "7.4.0-cfs",
+    "7.4.0-nocfs"
   };
 
   public static String[] getOldNames() {
@@ -295,7 +310,14 @@ public class TestBackwardsCompatibility extends LuceneTestCase {
   }
   
   final static String[] oldSortedNames = {
-    "sorted.7.0.0"
+    "sorted.7.0.0",
+    "sorted.7.0.1",
+    "sorted.7.1.0",
+    "sorted.7.2.0",
+    "sorted.7.2.1",
+    "sorted.7.3.0",
+    "sorted.7.3.1",
+    "sorted.7.4.0"
   };
 
   public static String[] getOldSortedNames() {
@@ -433,6 +455,8 @@ public class TestBackwardsCompatibility extends LuceneTestCase {
       "5.5.3-nocfs",
       "5.5.4-cfs",
       "5.5.4-nocfs",
+      "5.5.5-cfs",
+      "5.5.5-nocfs",
       "6.0.0-cfs",
       "6.0.0-nocfs",
       "6.0.1-cfs",
@@ -458,7 +482,15 @@ public class TestBackwardsCompatibility extends LuceneTestCase {
       "6.6.0-cfs",
       "6.6.0-nocfs",
       "6.6.1-cfs",
-      "6.6.1-nocfs"
+      "6.6.1-nocfs",
+      "6.6.2-cfs",
+      "6.6.2-nocfs",
+      "6.6.3-cfs",
+      "6.6.3-nocfs",
+      "6.6.4-cfs",
+      "6.6.4-nocfs",
+      "6.6.5-cfs",
+      "6.6.5-nocfs"
   };
 
   // TODO: on 6.0.0 release, gen the single segment indices and add here:

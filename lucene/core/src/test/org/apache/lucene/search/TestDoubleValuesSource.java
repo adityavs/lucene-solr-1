@@ -31,6 +31,7 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.English;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
@@ -122,7 +123,7 @@ public class TestDoubleValuesSource extends LuceneTestCase {
     };
     Collections.shuffle(Arrays.asList(fields), random());
     int numSorts = TestUtil.nextInt(random(), 1, fields.length);
-    return new Sort(Arrays.copyOfRange(fields, 0, numSorts));
+    return new Sort(ArrayUtil.copyOfSubArray(fields, 0, numSorts));
   }
 
   // Take a Sort, and replace any field sorts with Sortables
@@ -162,13 +163,13 @@ public class TestDoubleValuesSource extends LuceneTestCase {
 
   void checkSorts(Query query, Sort sort) throws Exception {
     int size = TestUtil.nextInt(random(), 1, searcher.getIndexReader().maxDoc() / 5);
-    TopDocs expected = searcher.search(query, size, sort, random().nextBoolean(), random().nextBoolean());
+    TopDocs expected = searcher.search(query, size, sort, random().nextBoolean());
     Sort mutatedSort = convertSortToSortable(sort);
-    TopDocs actual = searcher.search(query, size, mutatedSort, random().nextBoolean(), random().nextBoolean());
+    TopDocs actual = searcher.search(query, size, mutatedSort, random().nextBoolean());
 
     CheckHits.checkEqual(query, expected.scoreDocs, actual.scoreDocs);
 
-    if (size < actual.totalHits) {
+    if (size < actual.totalHits.value) {
       expected = searcher.searchAfter(expected.scoreDocs[size-1], query, size, sort);
       actual = searcher.searchAfter(actual.scoreDocs[size-1], query, size, mutatedSort);
       CheckHits.checkEqual(query, expected.scoreDocs, actual.scoreDocs);
@@ -186,6 +187,7 @@ public class TestDoubleValuesSource extends LuceneTestCase {
 
   public void testExplanations() throws Exception {
     for (Query q : testQueries) {
+      testExplanations(q, DoubleValuesSource.fromQuery(new TermQuery(new Term("english", "one"))));
       testExplanations(q, DoubleValuesSource.fromIntField("int"));
       testExplanations(q, DoubleValuesSource.fromLongField("long"));
       testExplanations(q, DoubleValuesSource.fromFloatField("float"));
@@ -196,6 +198,7 @@ public class TestDoubleValuesSource extends LuceneTestCase {
   }
 
   private void testExplanations(Query q, DoubleValuesSource vs) throws IOException {
+    DoubleValuesSource rewritten = vs.rewrite(searcher);
     searcher.search(q, new SimpleCollector() {
 
       DoubleValues v;
@@ -208,23 +211,56 @@ public class TestDoubleValuesSource extends LuceneTestCase {
 
       @Override
       public void setScorer(Scorer scorer) throws IOException {
-        this.v = vs.getValues(this.ctx, DoubleValuesSource.fromScorer(scorer));
+        this.v = rewritten.getValues(this.ctx, DoubleValuesSource.fromScorer(scorer));
       }
 
       @Override
       public void collect(int doc) throws IOException {
         Explanation scoreExpl = searcher.explain(q, ctx.docBase + doc);
         if (this.v.advanceExact(doc)) {
-          CheckHits.verifyExplanation("", doc, (float) v.doubleValue(), true, vs.explain(ctx, doc, scoreExpl));
+          CheckHits.verifyExplanation("", doc, (float) v.doubleValue(), true, rewritten.explain(ctx, doc, scoreExpl));
         }
         else {
-          assertFalse(vs.explain(ctx, doc, scoreExpl).isMatch());
+          assertFalse(rewritten.explain(ctx, doc, scoreExpl).isMatch());
         }
       }
 
       @Override
-      public boolean needsScores() {
-        return vs.needsScores();
+      public ScoreMode scoreMode() {
+        return vs.needsScores() ? ScoreMode.COMPLETE : ScoreMode.COMPLETE_NO_SCORES;
+      }
+    });
+  }
+
+  public void testQueryDoubleValuesSource() throws Exception {
+    Query q = new TermQuery(new Term("english", "two"));
+    DoubleValuesSource vs = DoubleValuesSource.fromQuery(q).rewrite(searcher);
+    searcher.search(q, new SimpleCollector() {
+
+      DoubleValues v;
+      Scorer scorer;
+      LeafReaderContext ctx;
+
+      @Override
+      protected void doSetNextReader(LeafReaderContext context) throws IOException {
+        this.ctx = context;
+      }
+
+      @Override
+      public void setScorer(Scorer scorer) throws IOException {
+        this.scorer = scorer;
+        this.v = vs.getValues(this.ctx, DoubleValuesSource.fromScorer(scorer));
+      }
+
+      @Override
+      public void collect(int doc) throws IOException {
+        assertTrue(v.advanceExact(doc));
+        assertEquals(scorer.score(), v.doubleValue(), 0.00001);
+      }
+
+      @Override
+      public ScoreMode scoreMode() {
+        return ScoreMode.COMPLETE;
       }
     });
   }

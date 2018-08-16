@@ -1,6 +1,4 @@
 = Tokenizers
-:page-shortname: tokenizers
-:page-permalink: tokenizers.html
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -27,7 +25,7 @@ You configure the tokenizer for a text field type in `schema.xml` with a `<token
 <fieldType name="text" class="solr.TextField">
   <analyzer type="index">
     <tokenizer class="solr.StandardTokenizerFactory"/>
-    <filter class="solr.StandardFilterFactory"/>
+    <filter class="solr.LowerCaseFilterFactory"/>
   </analyzer>
 </fieldType>
 ----
@@ -225,8 +223,6 @@ Reads the field text and generates edge n-gram tokens of sizes in the given rang
 
 `maxGramSize`: (integer, default is 1) The maximum n-gram size, must be >= `minGramSize`.
 
-`side`: ("front" or "back", default is "front") Whether to compute the n-grams from the beginning (front) of the text or from the end (back).
-
 *Example:*
 
 Default behavior (min and max default to 1):
@@ -256,21 +252,6 @@ Edge n-gram range of 2 to 5
 *In:* "babaloo"
 
 **Out:**"ba", "bab", "baba", "babal"
-
-*Example:*
-
-Edge n-gram range of 2 to 5, from the back side:
-
-[source,xml]
-----
-<analyzer>
-  <tokenizer class="solr.EdgeNGramTokenizerFactory" minGramSize="2" maxGramSize="5" side="back"/>
-</analyzer>
-----
-
-*In:* "babaloo"
-
-*Out:* "oo", "loo", "aloo", "baloo"
 
 == ICU Tokenizer
 
@@ -342,7 +323,7 @@ This tokenizer creates synonyms from file path hierarchies.
 
 This tokenizer uses a Java regular expression to break the input text stream into tokens. The expression provided by the pattern argument can be interpreted either as a delimiter that separates tokens, or to match patterns that should be extracted from the text as tokens.
 
-See http://docs.oracle.com/javase/8/docs/api/java/util/regex/Pattern.html[the Javadocs for `java.util.regex.Pattern`] for more information on Java regular expression syntax.
+See {java-javadocs}java/util/regex/Pattern.html[the Javadocs for `java.util.regex.Pattern`] for more information on Java regular expression syntax.
 
 *Factory class:* `solr.PatternTokenizerFactory`
 
@@ -484,9 +465,12 @@ Simple tokenizer that splits the text stream on whitespace and returns sequences
 
 *Factory class:* `solr.WhitespaceTokenizerFactory`
 
-*Arguments:* `rule` : Specifies how to define whitespace for the purpose of tokenization. Valid values:
+*Arguments:*
 
-* `java`: (Default) Uses https://docs.oracle.com/javase/8/docs/api/java/lang/Character.html#isWhitespace-int-[Character.isWhitespace(int)]
+`rule`::
+Specifies how to define whitespace for the purpose of tokenization. Valid values:
+
+* `java`: (Default) Uses {java-javadocs}java/lang/Character.html#isWhitespace-int-[Character.isWhitespace(int)]
 * `unicode`: Uses Unicode's WHITESPACE property
 
 *Example:*
@@ -501,3 +485,7 @@ Simple tokenizer that splits the text stream on whitespace and returns sequences
 *In:* "To be, or what?"
 
 *Out:* "To", "be,", "or", "what?"
+
+== OpenNLP Tokenizer and OpenNLP Filters
+
+See <<language-analysis.adoc#opennlp-integration,OpenNLP Integration>> for information about using the OpenNLP Tokenizer, along with information about available OpenNLP token filters.

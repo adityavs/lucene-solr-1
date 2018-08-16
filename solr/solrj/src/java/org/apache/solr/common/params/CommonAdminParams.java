@@ -19,7 +19,14 @@ package org.apache.solr.common.params;
 public interface CommonAdminParams
 {
 
-  /** async or not? **/
-  public static final String ASYNC = "async";
-
+  /** Async or not? **/
+  String ASYNC = "async";
+  /** Wait for final state of the operation. */
+  String WAIT_FOR_FINAL_STATE = "waitForFinalState";
+  /** Allow in-place move of replicas that use shared filesystems. */
+  String IN_PLACE_MOVE = "inPlaceMove";
+  /** Method to use for shard splitting. */
+  String SPLIT_METHOD = "splitMethod";
+  /** Timeout for replicas to become active. */
+  String TIMEOUT = "timeout";
 }

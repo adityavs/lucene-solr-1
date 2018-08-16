@@ -108,6 +108,7 @@ public class QueryUtils {
    * @see #checkSkipTo
    * @see #checkExplanations
    * @see #checkEqual
+   * @see CheckHits#checkMatches(Query, IndexSearcher)
    */
   public static void check(Random random, Query q1, IndexSearcher s) {
     check(random, q1, s, true);
@@ -125,6 +126,7 @@ public class QueryUtils {
           check(random, q1, wrapUnderlyingReader(random, s, +1), false);
         }
         checkExplanations(q1,s);
+        CheckHits.checkMatches(q1, s);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -161,7 +163,7 @@ public class QueryUtils {
     };
 
     IndexSearcher out = LuceneTestCase.newSearcher(new MultiReader(readers));
-    out.setSimilarity(s.getSimilarity(true));
+    out.setSimilarity(s.getSimilarity());
     return out;
   }
 
@@ -309,7 +311,8 @@ public class QueryUtils {
             lastDoc[0] = doc;
             try {
               if (scorer == null) {
-                Weight w = s.createNormalizedWeight(q, true);
+                Query rewritten = s.rewrite(q);
+                Weight w = s.createWeight(rewritten, ScoreMode.COMPLETE, 1);
                 LeafReaderContext context = readerContextArray.get(leafPtr);
                 scorer = w.scorer(context);
                 iterator = scorer.iterator();
@@ -362,8 +365,8 @@ public class QueryUtils {
           }
 
           @Override
-          public boolean needsScores() {
-            return true;
+          public ScoreMode scoreMode() {
+            return ScoreMode.COMPLETE;
           }
 
           @Override
@@ -373,8 +376,9 @@ public class QueryUtils {
             if (lastReader[0] != null) {
               final LeafReader previousReader = lastReader[0];
               IndexSearcher indexSearcher = LuceneTestCase.newSearcher(previousReader, false);
-              indexSearcher.setSimilarity(s.getSimilarity(true));
-              Weight w = indexSearcher.createNormalizedWeight(q, true);
+              indexSearcher.setSimilarity(s.getSimilarity());
+              Query rewritten = indexSearcher.rewrite(q);
+              Weight w = indexSearcher.createWeight(rewritten, ScoreMode.COMPLETE, 1);
               LeafReaderContext ctx = (LeafReaderContext)indexSearcher.getTopReaderContext();
               Scorer scorer = w.scorer(ctx);
               if (scorer != null) {
@@ -403,8 +407,9 @@ public class QueryUtils {
           // previous reader, hits NO_MORE_DOCS
           final LeafReader previousReader = lastReader[0];
           IndexSearcher indexSearcher = LuceneTestCase.newSearcher(previousReader, false);
-          indexSearcher.setSimilarity(s.getSimilarity(true));
-          Weight w = indexSearcher.createNormalizedWeight(q, true);
+          indexSearcher.setSimilarity(s.getSimilarity());
+          Query rewritten = indexSearcher.rewrite(q);
+          Weight w = indexSearcher.createWeight(rewritten, ScoreMode.COMPLETE, 1);
           LeafReaderContext ctx = previousReader.getContext();
           Scorer scorer = w.scorer(ctx);
           if (scorer != null) {
@@ -430,6 +435,7 @@ public class QueryUtils {
     final int lastDoc[] = {-1};
     final LeafReader lastReader[] = {null};
     final List<LeafReaderContext> context = s.getTopReaderContext().leaves();
+    Query rewritten = s.rewrite(q);
     s.search(q,new SimpleCollector() {
       private Scorer scorer;
       private int leafPtr;
@@ -443,7 +449,7 @@ public class QueryUtils {
         try {
           long startMS = System.currentTimeMillis();
           for (int i=lastDoc[0]+1; i<=doc; i++) {
-            Weight w = s.createNormalizedWeight(q, true);
+            Weight w = s.createWeight(rewritten, ScoreMode.COMPLETE, 1);
             Scorer scorer = w.scorer(context.get(leafPtr));
             Assert.assertTrue("query collected "+doc+" but advance("+i+") says no more docs!",scorer.iterator().advance(i) != DocIdSetIterator.NO_MORE_DOCS);
             Assert.assertEquals("query collected "+doc+" but advance("+i+") got to "+scorer.docID(),doc,scorer.docID());
@@ -464,8 +470,8 @@ public class QueryUtils {
       }
 
       @Override
-      public boolean needsScores() {
-        return true;
+      public ScoreMode scoreMode() {
+        return ScoreMode.COMPLETE;
       }
 
       @Override
@@ -475,8 +481,8 @@ public class QueryUtils {
         if (lastReader[0] != null) {
           final LeafReader previousReader = lastReader[0];
           IndexSearcher indexSearcher = LuceneTestCase.newSearcher(previousReader, false);
-          indexSearcher.setSimilarity(s.getSimilarity(true));
-          Weight w = indexSearcher.createNormalizedWeight(q, true);
+          indexSearcher.setSimilarity(s.getSimilarity());
+          Weight w = indexSearcher.createWeight(rewritten, ScoreMode.COMPLETE, 1);
           Scorer scorer = w.scorer((LeafReaderContext)indexSearcher.getTopReaderContext());
           if (scorer != null) {
             DocIdSetIterator iterator = scorer.iterator();
@@ -503,8 +509,8 @@ public class QueryUtils {
       // previous reader, hits NO_MORE_DOCS
       final LeafReader previousReader = lastReader[0];
       IndexSearcher indexSearcher = LuceneTestCase.newSearcher(previousReader, false);
-      indexSearcher.setSimilarity(s.getSimilarity(true));
-      Weight w = indexSearcher.createNormalizedWeight(q, true);
+      indexSearcher.setSimilarity(s.getSimilarity());
+      Weight w = indexSearcher.createWeight(rewritten, ScoreMode.COMPLETE, 1);
       Scorer scorer = w.scorer((LeafReaderContext)indexSearcher.getTopReaderContext());
       if (scorer != null) {
         DocIdSetIterator iterator = scorer.iterator();
@@ -523,7 +529,8 @@ public class QueryUtils {
 
   /** Check that the scorer and bulk scorer advance consistently. */
   public static void checkBulkScorerSkipTo(Random r, Query query, IndexSearcher searcher) throws IOException {
-    Weight weight = searcher.createNormalizedWeight(query, true);
+    query = searcher.rewrite(query);
+    Weight weight = searcher.createWeight(query, ScoreMode.COMPLETE, 1);
     for (LeafReaderContext context : searcher.getIndexReader().leaves()) {
       final Scorer scorer = weight.scorer(context);
       final BulkScorer bulkScorer = weight.bulkScorer(context);

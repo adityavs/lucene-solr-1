@@ -69,6 +69,71 @@
         "name",
         "val"
       ]
+    },
+    "set-obj-property": {
+      "type": "object",
+      "documentation": "https://lucene.apache.org/solr/guide/collections-api.html#clusterprop",
+      "description": "Add, edit, or delete a cluster-wide property.",
+      "properties": {
+        "legacyCloud": {
+          "type": "boolean"
+        },
+        "urlScheme": {
+          "type": "string"
+        },
+        "autoAddReplicas": {
+          "type": "boolean"
+        },
+        "maxCoresPerNode": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "collectionDefaults": {
+          "type": "object",
+          "properties": {
+            "numShards": {
+              "type": "integer",
+              "description": "Default no:of shards for a collection"
+            },
+            "tlogReplicas": {
+              "type": "integer",
+              "description": "Default no:of TLOG replicas"
+            },
+            "pullReplicas": {
+              "type": "integer",
+              "description": "Default no:of PULL replicas"
+            },
+            "nrtReplicas": {
+              "type": "integer",
+              "description": "Default no:of NRT replicas"
+            }
+          }
+        }
+      }
+    },
+    "utilize-node": {
+      "type": "object",
+      "documentation": "https://lucene.apache.org/solr/guide/collections-api.html#utilizenode",
+      "description": "use a replica to reduce load",
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "The name of the node"
+        },
+        "async": {
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ],
+          "description": "The value of the property. If the value is empty or null, the property is unset."
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   }
 }

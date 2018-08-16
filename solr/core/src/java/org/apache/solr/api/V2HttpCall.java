@@ -27,6 +27,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import com.google.common.collect.ImmutableSet;
 import org.apache.solr.client.solrj.SolrRequest;
@@ -34,6 +35,8 @@ import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.util.JsonSchemaValidator;
+import org.apache.solr.common.util.PathTrie;
 import org.apache.solr.common.util.ValidatingJsonMap;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.PluginBag;
@@ -48,16 +51,16 @@ import org.apache.solr.security.AuthorizationContext;
 import org.apache.solr.servlet.HttpSolrCall;
 import org.apache.solr.servlet.SolrDispatchFilter;
 import org.apache.solr.servlet.SolrRequestParsers;
-import org.apache.solr.common.util.JsonSchemaValidator;
-import org.apache.solr.common.util.PathTrie;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.solr.common.cloud.ZkStateReader.COLLECTION_PROP;
 import static org.apache.solr.common.params.CommonParams.JSON;
 import static org.apache.solr.common.params.CommonParams.WT;
+import static org.apache.solr.common.util.PathTrie.getPathSegments;
 import static org.apache.solr.servlet.SolrDispatchFilter.Action.ADMIN;
 import static org.apache.solr.servlet.SolrDispatchFilter.Action.PROCESS;
-import static org.apache.solr.common.util.PathTrie.getPathSegments;
+import static org.apache.solr.servlet.SolrDispatchFilter.Action.REMOTEQUERY;
 
 // class that handle the '/v2' path
 public class V2HttpCall extends HttpSolrCall {
@@ -105,28 +108,29 @@ public class V2HttpCall extends HttpSolrCall {
       }
 
       if ("c".equals(prefix) || "collections".equals(prefix)) {
-        String collectionName = origCorename = corename = pieces.get(1);
-        DocCollection collection = getDocCollection(collectionName);
+        origCorename = pieces.get(1);
+
+        DocCollection collection = resolveDocCollection(queryParams.get(COLLECTION_PROP, origCorename));
+
         if (collection == null) {
-           if ( ! path.endsWith(CommonParams.INTROSPECT)) {
+          if ( ! path.endsWith(CommonParams.INTROSPECT)) {
             throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "no such collection or alias");
           }
         } else {
-          boolean isPreferLeader = false;
-          if (path.endsWith("/update") || path.contains("/update/")) {
-            isPreferLeader = true;
-          }
+          boolean isPreferLeader = (path.endsWith("/update") || path.contains("/update/"));
           core = getCoreByCollection(collection.getName(), isPreferLeader);
           if (core == null) {
             //this collection exists , but this node does not have a replica for that collection
-            //todo find a better way to compute remote
-            extractRemotePath(corename, origCorename, 0);
-            return;
+            extractRemotePath(collection.getName(), origCorename);
+            if (action == REMOTEQUERY) {
+              this.path = path = path.substring(prefix.length() + origCorename.length() + 2);
+              return;
+            }
           }
         }
       } else if ("cores".equals(prefix)) {
-        origCorename = corename = pieces.get(1);
-        core = cores.getCore(corename);
+        origCorename = pieces.get(1);
+        core = cores.getCore(origCorename);
       }
       if (core == null) {
         log.error(">> path: '" + path + "'");
@@ -134,7 +138,7 @@ public class V2HttpCall extends HttpSolrCall {
           initAdminRequest(path);
           return;
         } else {
-          throw new SolrException(SolrException.ErrorCode.NOT_FOUND, "no core retrieved for " + corename);
+          throw new SolrException(SolrException.ErrorCode.NOT_FOUND, "no core retrieved for " + origCorename);
         }
       }
 
@@ -148,9 +152,7 @@ public class V2HttpCall extends HttpSolrCall {
       MDCLoggingContext.setCore(core);
       parseRequest();
 
-      if (usingAliases) {
-        processAliases(aliases, collectionsList);
-      }
+      addCollectionParamIfNeeded(getCollectionsList());
 
       action = PROCESS;
       // we are done with a valid handler
@@ -158,7 +160,7 @@ public class V2HttpCall extends HttpSolrCall {
       log.error("Error in init()", rte);
       throw rte;
     } finally {
-      if (api == null) action = PROCESS;
+      if (action == null && api == null) action = PROCESS;
       if (solrReq != null) solrReq.getContext().put(CommonParams.PATH, path);
     }
   }
@@ -180,17 +182,39 @@ public class V2HttpCall extends HttpSolrCall {
     if (solrReq == null) solrReq = parser.parse(core, path, req);
   }
 
-  protected DocCollection getDocCollection(String collectionName) {
+  /**
+   * Lookup the collection from the collection string (maybe comma delimited).
+   * Also sets {@link #collectionsList} by side-effect.
+   * if {@code secondTry} is false then we'll potentially recursively try this all one more time while ensuring
+   * the alias and collection info is sync'ed from ZK.
+   */
+  protected DocCollection resolveDocCollection(String collectionStr) {
     if (!cores.isZooKeeperAware()) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Solr not running in cloud mode ");
     }
     ZkStateReader zkStateReader = cores.getZkController().getZkStateReader();
-    DocCollection collection = zkStateReader.getClusterState().getCollectionOrNull(collectionName);
-    if (collection == null) {
-      collectionName = corename = lookupAliases(collectionName);
-      collection = zkStateReader.getClusterState().getCollectionOrNull(collectionName);
+
+    Supplier<DocCollection> logic = () -> {
+      this.collectionsList = resolveCollectionListOrAlias(collectionStr); // side-effect
+      String collectionName = collectionsList.get(0); // first
+      //TODO an option to choose another collection in the list if can't find a local replica of the first?
+
+      return zkStateReader.getClusterState().getCollectionOrNull(collectionName);
+    };
+
+    DocCollection docCollection = logic.get();
+    if (docCollection != null) {
+      return docCollection;
     }
-    return collection;
+    // ensure our view is up to date before trying again
+    try {
+      zkStateReader.aliasesManager.update();
+      zkStateReader.forceUpdateCollection(collectionsList.get(0));
+    } catch (Exception e) {
+      log.error("Error trying to update state while resolving collection.", e);
+      //don't propagate exception on purpose
+    }
+    return logic.get();
   }
 
   public static Api getApiInfo(PluginBag<SolrRequestHandler> requestHandlers,

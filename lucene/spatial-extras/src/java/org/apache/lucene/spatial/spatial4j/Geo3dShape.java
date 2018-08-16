@@ -112,11 +112,7 @@ public class Geo3dShape<T extends GeoAreaShape> implements Shape {
     if (bbox == null) {
       LatLonBounds bounds = new LatLonBounds();
       shape.getBounds(bounds);
-      double leftLon = bounds.checkNoLongitudeBound() ? -Math.PI : bounds.getLeftLongitude();
-      double rightLon = bounds.checkNoLongitudeBound() ? Math.PI : bounds.getRightLongitude();
-      double minLat = bounds.checkNoBottomLatitudeBound() ? -Math.PI * 0.5 : bounds.getMinLatitude();
-      double maxLat = bounds.checkNoTopLatitudeBound() ? Math.PI * 0.5 : bounds.getMaxLatitude();
-      GeoBBox geoBBox = GeoBBoxFactory.makeGeoBBox(shape.getPlanetModel(), maxLat, minLat, leftLon, rightLon);
+      GeoBBox geoBBox = GeoBBoxFactory.makeGeoBBox(shape.getPlanetModel(), bounds);
       bbox = new Geo3dRectangleShape(geoBBox, spatialcontext);
       this.boundingBox = bbox;
     }
@@ -157,6 +153,11 @@ public class Geo3dShape<T extends GeoAreaShape> implements Shape {
   public SpatialContext getContext() {
     return spatialcontext;
   }
+
+  @Override
+  public String toString() {
+    return "Geo3D:" + shape.toString();
+  } // note: the shape usually prints its planet model
 
   @Override
   public boolean equals(Object o) {

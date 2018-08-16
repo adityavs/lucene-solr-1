@@ -18,51 +18,84 @@
 package org.apache.solr.client.solrj.cloud.autoscaling;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
-import org.apache.solr.client.solrj.cloud.autoscaling.Policy.ReplicaInfo;
+import org.apache.solr.client.solrj.cloud.autoscaling.Variable.Type;
 import org.apache.solr.common.MapWriter;
-import org.apache.solr.common.cloud.rule.ImplicitSnitch;
+import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.Utils;
 
 import static java.util.Collections.singletonMap;
-import static org.apache.solr.client.solrj.cloud.autoscaling.Clause.TestStatus.PASS;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.EQUAL;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.GREATER_THAN;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.LESS_THAN;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.NOT_EQUAL;
+import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.RANGE_EQUAL;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Operand.WILDCARD;
 import static org.apache.solr.client.solrj.cloud.autoscaling.Policy.ANY;
 import static org.apache.solr.common.params.CoreAdminParams.COLLECTION;
 import static org.apache.solr.common.params.CoreAdminParams.REPLICA;
 import static org.apache.solr.common.params.CoreAdminParams.SHARD;
+import static org.apache.solr.common.util.StrUtils.formatString;
+import static org.apache.solr.common.util.Utils.toJSONString;
 
-// a set of conditions in a policy
+/**
+ * Represents a set of conditions in the policy
+ */
 public class Clause implements MapWriter, Comparable<Clause> {
-  public Map<String, Object> original;
-  public Condition collection, shard, replica, tag, globalTag;
+  private static final Set<String> IGNORE_TAGS = new HashSet<>(Arrays.asList(REPLICA, COLLECTION, SHARD, "strict", "type"));
 
-  boolean strict = true;
+  final boolean hasComputedValue;
+  final Map<String, Object> original;
+  Condition collection, shard, replica, tag, globalTag;
+  final Replica.Type type;
+  boolean strict;
 
-  public Clause(Map<String, Object> m) {
-    this.original = m;
+  protected Clause(Clause clause, Function<Condition, Object> computedValueEvaluator) {
+    this.original = clause.original;
+    this.type = clause.type;
+    this.collection = clause.collection;
+    this.shard = clause.shard;
+    this.tag = evaluateValue(clause.tag, computedValueEvaluator);
+    this.replica = evaluateValue(clause.replica, computedValueEvaluator);
+    this.globalTag = evaluateValue(clause.globalTag, computedValueEvaluator);
+    this.hasComputedValue = clause.hasComputedValue;
+    this.strict = clause.strict;
+  }
+
+  // internal use only
+  Clause(Map<String, Object> original, Condition tag, Condition globalTag, boolean isStrict)  {
+    this.original = original;
+    this.tag = tag;
+    this.globalTag = globalTag;
+    this.globalTag.clause = this;
+    this.type = null;
+    this.hasComputedValue = false;
+    this.strict = isStrict;
+  }
+
+  private Clause(Map<String, Object> m) {
+    this.original = Utils.getDeepCopy(m, 10);
+    String type = (String) m.get("type");
+    this.type = type == null || ANY.equals(type) ? null : Replica.Type.valueOf(type.toUpperCase(Locale.ROOT));
     strict = Boolean.parseBoolean(String.valueOf(m.getOrDefault("strict", "true")));
     Optional<String> globalTagName = m.keySet().stream().filter(Policy.GLOBAL_ONLY_TAGS::contains).findFirst();
     if (globalTagName.isPresent()) {
       globalTag = parse(globalTagName.get(), m);
       if (m.size() > 2) {
-        throw new RuntimeException("Only one extra tag supported for the tag " + globalTagName.get() + " in " + Utils.toJSONString(m));
+        throw new RuntimeException("Only one extra tag supported for the tag " + globalTagName.get() + " in " + toJSONString(m));
       }
       tag = parse(m.keySet().stream()
           .filter(s -> (!globalTagName.get().equals(s) && !IGNORE_TAGS.contains(s)))
@@ -70,16 +103,77 @@ public class Clause implements MapWriter, Comparable<Clause> {
     } else {
       collection = parse(COLLECTION, m);
       shard = parse(SHARD, m);
-      if(m.get(REPLICA) == null){
-        throw new RuntimeException(StrUtils.formatString("'replica' is required in {0}", Utils.toJSONString(m)));
+      if (m.get(REPLICA) == null) {
+        throw new IllegalArgumentException(formatString("'replica' is required in {0}", toJSONString(m)));
       }
       this.replica = parse(REPLICA, m);
-      if (replica.op == WILDCARD) throw new RuntimeException("replica val cannot be null" + Utils.toJSONString(m));
-      m.forEach((s, o) -> parseCondition(s, o));
+      if (replica.op == WILDCARD) throw new IllegalArgumentException("replica val cannot be null" + toJSONString(m));
+      m.forEach(this::parseCondition);
     }
     if (tag == null)
-      throw new RuntimeException("Invalid op, must have one and only one tag other than collection, shard,replica " + Utils.toJSONString(m));
+      throw new RuntimeException("Invalid op, must have one and only one tag other than collection, shard,replica " + toJSONString(m));
+    if (tag.name.startsWith(Clause.METRICS_PREFIX)) {
+      List<String> ss = StrUtils.splitSmart(tag.name, ':');
+      if (ss.size() < 3 || ss.size() > 4) {
+        throw new RuntimeException("Invalid metrics: param in " + toJSONString(m) + " must have at 2 or 3 segments after 'metrics:' separated by ':'");
+      }
+    }
+    doPostValidate(collection, shard, replica, tag, globalTag);
+    hasComputedValue = hasComputedValue();
+  }
 
+  private void doPostValidate(Condition... conditions) {
+    for (Condition condition : conditions) {
+      if (condition == null) continue;
+      String err = condition.varType.postValidate(condition);
+      if (err != null) {
+        throw new IllegalArgumentException(formatString("Error in clause : {0}, caused by : {1}", toJSONString(original), err));
+      }
+    }
+  }
+
+  public static Clause create(String json) {
+    return create((Map<String, Object>) Utils.fromJSONString(json));
+  }
+
+  public static Clause create(Map<String, Object> m) {
+    Clause clause = new Clause(m);
+    return clause.hasComputedValue() ?
+        clause :
+        clause.getSealedClause(null);
+  }
+
+  public static String parseString(Object val) {
+    if (val instanceof Condition) val = ((Condition) val).val;
+    return val == null ? null : String.valueOf(val);
+  }
+
+  public Condition getCollection() {
+    return collection;
+  }
+
+  public Condition getShard() {
+    return shard;
+  }
+
+  public Condition getReplica() {
+    return replica;
+  }
+
+  public Condition getTag() {
+    return tag;
+  }
+
+  public Condition getGlobalTag() {
+    return globalTag;
+  }
+
+  private Condition evaluateValue(Condition condition, Function<Condition, Object> computedValueEvaluator) {
+    if (condition == null) return null;
+    if (condition.computedType == null) return condition;
+    Object val = computedValueEvaluator.apply(condition);
+    val = condition.op.readRuleValue(new Condition(condition.name, val, condition.op, null, null));
+    return new Condition(condition.name, val, condition.op, null, this);
   }
 
   public boolean doesOverride(Clause that) {
@@ -100,229 +194,286 @@ public class Clause implements MapWriter, Comparable<Clause> {
     tag = parse(s, singletonMap(s, o));
   }
 
+  private int compareTypes(Replica.Type t1, Replica.Type t2) {
+    if (t1 == null && t2 == null) return 0;
+    if (t1 != null && t2 == null) return -1;
+    if (t1 == null) return 1;
+    return 0;
+  }
+
+  private boolean hasComputedValue() {
+    if (replica != null && replica.computedType != null) return true;
+    if (tag != null && tag.computedType != null) return true;
+    if (globalTag != null && globalTag.computedType != null) return true;
+    return false;
+
+  }
+
   @Override
   public int compareTo(Clause that) {
-    try {
-      int v = Integer.compare(this.tag.op.priority, that.tag.op.priority);
-      if (v != 0) return v;
-      if (this.isPerCollectiontag() && that.isPerCollectiontag()) {
-        v = Integer.compare(this.replica.op.priority, that.replica.op.priority);
-        if (v == 0) {
-          v = Long.compare((Long) this.replica.val, (Long) that.replica.val);
-          v = this.replica.op == LESS_THAN ? v : v * -1;
-        }
-        return v;
-      } else {
-        return 0;
+    int v = Integer.compare(this.tag.op.priority, that.tag.op.priority);
+    if (v != 0) return v;
+    if (this.isPerCollectiontag() && that.isPerCollectiontag()) {
+      v = Integer.compare(this.replica.op.priority, that.replica.op.priority);
+      if (v == 0) {// higher the number of replicas , harder to satisfy
+        Double thisVal = this.replica.val instanceof RangeVal ? ((RangeVal) this.replica.val).max.doubleValue() : (Double) this.replica.val;
+        Double thatVal = that.replica.val instanceof RangeVal ? ((RangeVal) that.replica.val).max.doubleValue() : (Double) that.replica.val;
+        v = Preference.compareWithTolerance(thisVal, thatVal, 1);
+        v = this.replica.op == LESS_THAN ? v : v * -1;
       }
-    } catch (NullPointerException e) {
-      throw e;
+      if (v == 0) v = compareTypes(this.type, that.type);
+      return v;
+    } else {
+      return 0;
     }
   }
 
-  void addTags(List<String> params) {
+  void addTags(Collection<String> params) {
     if (globalTag != null && !params.contains(globalTag.name)) params.add(globalTag.name);
     if (tag != null && !params.contains(tag.name)) params.add(tag.name);
   }
 
-  public static class Condition {
-    final String name;
-    final Object val;
-    final Operand op;
-
-    Condition(String name, Object val, Operand op) {
-      this.name = name;
-      this.val = val;
-      this.op = op;
-    }
-
-    TestStatus match(Row row) {
-      return op.match(val, row.getVal(name));
-    }
-
-    TestStatus match(Object testVal) {
-      return op.match(this.val, testVal);
-    }
-
-    public boolean isPass(Object inputVal) {
-      return op.match(val, validate(name, inputVal, false)) == PASS;
-    }
-
-    public boolean isPass(Row row) {
-      return op.match(val, row.getVal(name)) == PASS;
-    }
-
-    @Override
-    public boolean equals(Object that) {
-      if (that instanceof Condition) {
-        Condition c = (Condition) that;
-        return Objects.equals(c.name, name) && Objects.equals(c.val, val) && c.op == op;
-      }
-      return false;
-    }
-
-    public Integer delta(Object val) {
-      return op.delta(this.val, val);
-    }
-
-    public String getName() {
-      return name;
-    }
-
-    public Object getValue() {
-      return val;
-    }
-    
-    public Operand getOperand() {
-      return op;
-    }
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Clause)) return false;
+    Clause that = (Clause)o;
+    return  Objects.equals(this.original, that.original);
   }
 
-  static Condition parse(String s, Map m) {
+  //replica value is zero
+  boolean isReplicaZero() {
+    return replica != null && replica.getOperand() == Operand.EQUAL && replica.val instanceof Double &&
+        Preference.compareWithTolerance(0d, (Double) replica.val, 1) == 0;
+  }
+
+  public SealedClause getSealedClause(Function<Condition, Object> computedValueEvaluator) {
+    return this instanceof SealedClause ?
+        (SealedClause) this :
+        new SealedClause(this, computedValueEvaluator);
+  }
+
+  Condition parse(String s, Map<String,Object> m) {
+
     Object expectedVal = null;
+    ComputedType computedType = null;
     Object val = m.get(s);
+    Type varType = VariableBase.getTagType(s);
+    if (varType.meta.isHidden()) {
+      throwExp(m,"''{0}'' is not allowed", varType.tagName);
+    }
     try {
       String conditionName = s.trim();
       Operand operand = null;
       if (val == null) {
         operand = WILDCARD;
         expectedVal = Policy.ANY;
+      } else if (val instanceof List) {
+        if (!varType.meta.supportArrayVals()) {
+          throwExp(m, "array values are not supported for {0}", conditionName);
+        }
+        expectedVal = readListVal(m, (List) val, varType, conditionName);
+        operand = Operand.IN;
       } else if (val instanceof String) {
         String strVal = ((String) val).trim();
-        if (Policy.ANY.equals(strVal) || Policy.EACH.equals(strVal)) operand = WILDCARD;
-        else if (strVal.startsWith(NOT_EQUAL.operand)) operand = NOT_EQUAL;
-        else if (strVal.startsWith(GREATER_THAN.operand)) operand = GREATER_THAN;
-        else if (strVal.startsWith(LESS_THAN.operand)) operand = LESS_THAN;
-        else operand = EQUAL;
-        expectedVal = validate(s, strVal.substring(EQUAL == operand || WILDCARD == operand ? 0 : 1), true);
+        val = strVal;
+        operand = getOperand(strVal);
+        strVal = strVal.substring(Operand.EQUAL == operand || WILDCARD == operand ? 0 : 1);
+        for (ComputedType t : ComputedType.values()) {
+          String changedVal = t.match(strVal);
+          if (changedVal != null) {
+            computedType = t;
+            strVal = changedVal;
+            if (varType == null || !varType.supportedComputedTypes.contains(computedType)) {
+              throwExp(m,"''{0}'' is not allowed for variable :  ''{1}''",t,conditionName);
+            }
+          }
+        }
+        if (computedType == null && ((String) val).charAt(0) == '#' && !varType.wildCards.contains(val)) {
+          throwExp(m, "''{0}'' is not an allowed value for ''{1}'', supported value is : {2} ", val, conditionName,  varType.wildCards );
+
+        }
+        operand = varType == null ? operand : varType.getOperand(operand, strVal, computedType);
+        expectedVal = validate(s, new Condition(s, strVal, operand, computedType, null), true);
+
       } else if (val instanceof Number) {
-        operand = EQUAL;
-        expectedVal = validate(s, val, true);
+        operand = Operand.EQUAL;
+        operand = varType.getOperand(operand, val, null);
+        expectedVal = validate(s, new Condition(s, val, operand, null, null), true);
       }
-      return new Condition(conditionName, expectedVal, operand);
+      return new Condition(conditionName, expectedVal, operand, computedType, this);
 
+    } catch (IllegalArgumentException iae) {
+      throw iae;
     } catch (Exception e) {
-      throw new IllegalArgumentException("Invalid tag : " + s + ":" + val, e);
+      throwExp(m, "Invalid tag : {0} ",s );
+      return null;
     }
   }
 
-  public class Violation implements MapWriter {
-    final String shard, coll, node;
-    final Object actualVal;
-    final Integer delta;//how far is the actual value from the expected value
-    final Object tagKey;
-    private final int hash;
+  public void throwExp(Map<String, Object> clause, String msg, Object... args) {
+    throw new IllegalArgumentException("syntax error in clause :"+ toJSONString(clause)+ " , msg:  "+  formatString(msg, args));
+  }
 
-
-    private Violation(String coll, String shard, String node, Object actualVal, Integer delta, Object tagKey) {
-      this.shard = shard;
-      this.coll = coll;
-      this.node = node;
-      this.delta = delta;
-      this.actualVal = actualVal;
-      this.tagKey = tagKey;
-      hash = ("" + coll + " " + shard + " " + node + " " + String.valueOf(tagKey) + " " + Utils.toJSONString(getClause().toMap(new HashMap<>()))).hashCode();
-    }
-
-    public Clause getClause() {
-      return Clause.this;
-    }
-
-    @Override
-    public int hashCode() {
-      return hash;
-    }
-    //if the delta is lower , this violation is less serious
-    public boolean isLessSerious(Violation that) {
-      return that.delta != null && delta != null &&
-          Math.abs(delta) < Math.abs(that.delta);
-    }
-
-    @Override
-    public boolean equals(Object that) {
-      if (that instanceof Violation) {
-        Violation v = (Violation) that;
-        return Objects.equals(this.shard, v.shard) &&
-            Objects.equals(this.coll, v.coll) &&
-            Objects.equals(this.node, v.node) &&
-            Objects.equals(this.tagKey, v.tagKey)
-            ;
+  private List readListVal(Map m, List val, Type varType, String conditionName) {
+    List list = val;
+    list = (List) list.stream()
+        .map(it -> varType.validate(conditionName, it, true))
+        .map(it -> {
+          if (it instanceof String) {
+            String trim = ((String) it).trim();
+            if (trim.isEmpty())
+              throw new IllegalArgumentException(formatString("{0} cannot have an empty string value in clause : {1}",
+                  conditionName, toJSONString(m)));
+            return trim;
+          } else return it;
+        }).filter(it -> it == null ? false : true)
+        .collect(Collectors.toList());
+    if (list.isEmpty())
+      throw new IllegalArgumentException(formatString("{0} cannot have an empty list value in clause : {1}",
+          conditionName, toJSONString(m)));
+    for (Object o : list) {
+      if (o instanceof String) {
+        if (getOperand((String) o) != EQUAL) {
+          throw new IllegalArgumentException(formatString("No operators are supported in collection values in condition : {0} in clause : {1}",
+              conditionName, toJSONString(m)));
+        }
       }
-      return false;
     }
+    if (list.size() < 2) {
+      throw new IllegalArgumentException(formatString("Array should have more than one value in  condition : {0} in clause : {1}",
+          conditionName, toJSONString(m)));
 
-    @Override
-    public void writeMap(EntryWriter ew) throws IOException {
-      ew.putIfNotNull("collection", coll);
-      ew.putIfNotNull("shard", shard);
-      ew.putIfNotNull("node", node);
-      ew.putIfNotNull("tagKey", String.valueOf(tagKey));
-      ew.putIfNotNull("violation", (MapWriter) ew1 -> {
-        ew1.put(getClause().isPerCollectiontag() ? "replica" : tag.name,
-            String.valueOf(actualVal));
-        ew1.putIfNotNull("delta", delta);
-      });
-      ew.put("clause", getClause());
     }
+    return list;
   }
 
+  private Operand getOperand(String strVal) {
+    Operand operand;
+    if (Policy.ANY.equals(strVal) || Policy.EACH.equals(strVal)) operand = WILDCARD;
+    else if (strVal.startsWith(NOT_EQUAL.operand)) operand = NOT_EQUAL;
+    else if (strVal.startsWith(GREATER_THAN.operand)) operand = GREATER_THAN;
+    else if (strVal.startsWith(LESS_THAN.operand)) operand = LESS_THAN;
+    else operand = Operand.EQUAL;
+    return operand;
+  }
 
-  public List<Violation> test(List<Row> allRows) {
-    List<Violation> violations = new ArrayList<>();
+  public List<Violation> test(Policy.Session session, double[] deviations) {
+    ComputedValueEvaluator computedValueEvaluator = new ComputedValueEvaluator(session);
+    Violation.Ctx ctx = new Violation.Ctx(this, session.matrix, computedValueEvaluator);
     if (isPerCollectiontag()) {
-      Map<String, Map<String, Map<String, AtomicInteger>>> replicaCount = computeReplicaCounts(allRows);
-      for (Map.Entry<String, Map<String, Map<String, AtomicInteger>>> e : replicaCount.entrySet()) {
-        if (!collection.isPass(e.getKey())) continue;
-        for (Map.Entry<String, Map<String, AtomicInteger>> shardVsCount : e.getValue().entrySet()) {
-          if (!shard.isPass(shardVsCount.getKey())) continue;
-          for (Map.Entry<String, AtomicInteger> counts : shardVsCount.getValue().entrySet()) {
-            if (!replica.isPass(counts.getValue())) {
-              violations.add(new Violation(
-                  e.getKey(),
-                  shardVsCount.getKey(),
-                  tag.name.equals("node") ? counts.getKey() : null,
+      Map<String, Map<String, Map<String, ReplicaCount>>> replicaCounts = computeReplicaCounts(session.matrix, computedValueEvaluator);
+      for (Map.Entry<String, Map<String, Map<String, ReplicaCount>>> e : replicaCounts.entrySet()) {
+        computedValueEvaluator.collName = e.getKey();
+        if (!collection.isPass(computedValueEvaluator.collName)) continue;
+        for (Map.Entry<String, Map<String, ReplicaCount>> shardVsCount : e.getValue().entrySet()) {
+          computedValueEvaluator.shardName = shardVsCount.getKey();
+          if (!shard.isPass(computedValueEvaluator.shardName)) continue;
+          for (Map.Entry<String, ReplicaCount> counts : shardVsCount.getValue().entrySet()) {
+            if (tag.varType.meta.isNodeSpecificVal()) computedValueEvaluator.node = counts.getKey();
+            SealedClause sealedClause = getSealedClause(computedValueEvaluator);
+            ReplicaCount replicas = counts.getValue();
+            if (!sealedClause.replica.isPass(replicas)) {
+              Violation violation = new Violation(sealedClause,
+                  computedValueEvaluator.collName,
+                  computedValueEvaluator.shardName,
+                  tag.varType.meta.isNodeSpecificVal() ? computedValueEvaluator.node : null,
                   counts.getValue(),
-                  replica.delta(counts.getValue()),
-                  counts.getKey()
-              ));
+                  sealedClause.getReplica().delta(replicas),
+                  tag.varType.meta.isNodeSpecificVal() ? null : counts.getKey());
+              tag.varType.addViolatingReplicas(ctx.reset(counts.getKey(), replicas, violation));
+            } else {
+              if (deviations != null && sealedClause.replica.op == RANGE_EQUAL) {
+                Number actualCount = replicas.getVal(type);
+                Double realDelta = ((RangeVal) sealedClause.replica.val).realDelta(actualCount.doubleValue());
+                realDelta = this.isReplicaZero() ? -1 * realDelta : realDelta;
+                deviations[0] += Math.abs(realDelta);
+              }
             }
           }
         }
       }
     } else {
-      for (Row r : allRows) {
-        if (!tag.isPass(r)) {
-          violations.add(new Violation(null, null, r.node, r.getVal(tag.name), tag.delta(r.getVal(tag.name)), null));
+      for (Row r : session.matrix) {
+        computedValueEvaluator.node = r.node;
+        SealedClause sealedClause = getSealedClause(computedValueEvaluator);
+        if (!sealedClause.getGlobalTag().isPass(r)) {
+          sealedClause.getGlobalTag().varType.addViolatingReplicas(ctx.reset(null, null,
+              new Violation(sealedClause, null, null, r.node, r.getVal(sealedClause.globalTag.name),
+                  sealedClause.globalTag.delta(r.getVal(globalTag.name)), null)));
         }
       }
     }
-    return violations;
+    return ctx.allViolations;
 
   }
 
-
-  private Map<String, Map<String, Map<String, AtomicInteger>>> computeReplicaCounts(List<Row> allRows) {
-    Map<String, Map<String, Map<String, AtomicInteger>>> collVsShardVsTagVsCount = new HashMap<>();
-    for (Row row : allRows)
+  private Map<String, Map<String, Map<String, ReplicaCount>>> computeReplicaCounts(List<Row> allRows,
+                                                                                   ComputedValueEvaluator computedValueEvaluator) {
+    Map<String, Map<String, Map<String, ReplicaCount>>> collVsShardVsTagVsCount = new HashMap<>();
+    for (Row row : allRows) {
+      computedValueEvaluator.node = row.node;
       for (Map.Entry<String, Map<String, List<ReplicaInfo>>> colls : row.collectionVsShardVsReplicas.entrySet()) {
         String collectionName = colls.getKey();
         if (!collection.isPass(collectionName)) continue;
-        collVsShardVsTagVsCount.putIfAbsent(collectionName, new HashMap<>());
-        Map<String, Map<String, AtomicInteger>> collMap = collVsShardVsTagVsCount.get(collectionName);
+        Map<String, Map<String, ReplicaCount>> collMap = collVsShardVsTagVsCount.computeIfAbsent(collectionName, s -> new HashMap<>());
         for (Map.Entry<String, List<ReplicaInfo>> shards : colls.getValue().entrySet()) {
           String shardName = shards.getKey();
           if (ANY.equals(shard.val)) shardName = ANY;
           if (!shard.isPass(shardName)) break;
-          collMap.putIfAbsent(shardName, new HashMap<>());
-          Map<String, AtomicInteger> tagVsCount = collMap.get(shardName);
+          Map<String, ReplicaCount> tagVsCount = collMap.computeIfAbsent(shardName, s -> new HashMap<>());
           Object tagVal = row.getVal(tag.name);
-          tagVsCount.putIfAbsent(tag.isPass(tagVal) ? String.valueOf(tagVal) : "", new AtomicInteger());
-          if (tag.isPass(tagVal)) {
-            tagVsCount.get(String.valueOf(tagVal)).addAndGet(shards.getValue().size());
+          computedValueEvaluator.collName = collectionName;
+          computedValueEvaluator.shardName = shardName;
+          SealedClause sealedClause = getSealedClause(computedValueEvaluator);
+          Condition t = sealedClause.getTag();
+          if (t.varType.meta.isNodeSpecificVal()) {
+            boolean pass = t.getOperand().match(t.val, tagVal) == TestStatus.PASS;
+            tagVsCount.computeIfAbsent(row.node, s -> new ReplicaCount());
+            if(pass) {
+              tagVsCount.get(row.node).increment(shards.getValue());
+            }
+          } else {
+            tagVsCount.computeIfAbsent(String.valueOf(t.getValue()), s -> new ReplicaCount());
+            boolean pass = sealedClause.getTag().isPass(tagVal);
+            if(!pass && !isReplicaZero()) continue;
+            tagVsCount.computeIfAbsent(pass ? String.valueOf(tagVal) : "", s -> new ReplicaCount());
+            if (pass) {
+              tagVsCount.get(String.valueOf(tagVal)).increment(shards.getValue());
+            }
           }
         }
       }
+    }
+
+    if (this.getTag().op != LESS_THAN && this.getTag().varType == Type.NODE) {
+      collVsShardVsTagVsCount.forEach((coll, shardVsNodeVsCount) ->
+          shardVsNodeVsCount.forEach((shard, nodeVsCount) -> {
+            for (Row row : allRows) {
+              if (!nodeVsCount.containsKey(row.node)) {
+                nodeVsCount.put(row.node, new ReplicaCount());
+              }
+            }
+          }));
+    }
     return collVsShardVsTagVsCount;
+  }
+
+  public boolean isMatch(ReplicaInfo r, String collection, String shard) {
+    if (type != null && r.getType() != type) return false;
+    if (r.getCollection().equals(collection)) {
+      if (this.shard == null || this.shard.val.equals(Policy.ANY)) return true;
+      else if (this.shard.val.equals(Policy.EACH) && r.getShard().equals(shard)) return true;
+      else return this.shard.val.equals(r.getShard()) && r.getShard().equals(shard);
+    }
+    return false;
+  }
+
+  boolean matchShard(String replicaShard, String shardInContext) {
+    if (shard == null || shard.val.equals(ANY)) return true;
+    if (shard.val.equals(Policy.EACH) && replicaShard.equals(shardInContext)) return true;
+    if (shard.val.equals(replicaShard)) return true;
+    return false;
   }
 
   public boolean isStrict() {
@@ -331,7 +482,7 @@ public class Clause implements MapWriter, Comparable<Clause> {
 
   @Override
   public String toString() {
-    return Utils.toJSONString(original);
+    return toJSONString(original);
   }
 
   @Override
@@ -343,67 +494,34 @@ public class Clause implements MapWriter, Comparable<Clause> {
     NOT_APPLICABLE, FAIL, PASS
   }
 
-  private static final Set<String> IGNORE_TAGS = new HashSet<>(Arrays.asList(REPLICA, COLLECTION, SHARD, "strict"));
+  public static class ComputedValueEvaluator implements Function<Condition, Object> {
+    final Policy.Session session;
+    String collName = null;
+    String shardName = null;
+    String node = null;
 
-  static class ValidateInfo {
-    final Class type;
-    final Set<String> vals;
-    final Number min;
-    final Number max;
-
-
-    ValidateInfo(Class type, Set<String> vals, Number min, Number max) {
-      this.type = type;
-      this.vals = vals;
-      this.min = min;
-      if(min != null && !type.isInstance(min)) throw new RuntimeException("wrong min value type, expected: " + type.getName() + " actual: " + min.getClass().getName());
-      this.max = max;
-      if(max != null && !type.isInstance(max)) throw new RuntimeException("wrong max value type, expected: " + type.getName() + " actual: " + max.getClass().getName());
+    public ComputedValueEvaluator(Policy.Session session) {
+      this.session = session;
     }
+
+    @Override
+    public Object apply(Condition computedCondition) {
+      return computedCondition.varType.computeValue(session, computedCondition, collName, shardName, node);
+    }
+
   }
 
-
   /**
-   *
-   * @param name name of the condition
-   * @param val value of the condition
+   * @param name      name of the condition
+   * @param val       value of the condition
    * @param isRuleVal is this provided in the rule
    * @return actual validated value
    */
-  public static Object validate(String name, Object val, boolean isRuleVal) {
+  public static Object  validate(String name, Object val, boolean isRuleVal) {
     if (val == null) return null;
-    ValidateInfo info = validatetypes.get(name);
-    if (info == null && name.startsWith(ImplicitSnitch.SYSPROP)) info = validatetypes.get("STRING");
+    Type info = VariableBase.getTagType(name);
     if (info == null) throw new RuntimeException("Unknown type :" + name);
-    if (info.type == Double.class) {
-      Double num = parseDouble(name, val);
-      if (isRuleVal) {
-        if (info.min != null)
-          if (Double.compare(num, (Double) info.min) == -1)
-            throw new RuntimeException(name + ": " + val + " must be greater than " + info.min);
-        if (info.max != null)
-          if (Double.compare(num, (Double) info.max) == 1)
-            throw new RuntimeException(name + ": " + val + " must be less than " + info.max);
-      }
-      return num;
-    } else if (info.type == Long.class) {
-      Long num = parseLong(name, val);
-      if (isRuleVal) {
-        if (info.min != null)
-          if (num < info.min.longValue())
-            throw new RuntimeException(name + ": " + val + " must be greater than " + info.min);
-        if (info.max != null)
-          if (num > info.max.longValue())
-            throw new RuntimeException(name + ": " + val + " must be less than " + info.max);
-      }
-      return num;
-    } else if (info.type == String.class) {
-      if (isRuleVal && info.vals != null && !info.vals.contains(val))
-        throw new RuntimeException(name + ": " + val + " must be one of " + StrUtils.join(info.vals, ','));
-      return val;
-    } else {
-      throw new RuntimeException("Invalid type ");
-    }
+    return info.validate(name, val, isRuleVal);
   }
 
   public static Long parseLong(String name, Object val) {
@@ -425,14 +543,16 @@ public class Clause implements MapWriter, Comparable<Clause> {
       num = (Number) val;
     }
 
-    if (num != null)  {
+    if (num != null) {
       return num.longValue();
     }
     throw new RuntimeException(name + ": " + val + "not a valid number");
   }
 
+
   public static Double parseDouble(String name, Object val) {
     if (val == null) return null;
+    if (val instanceof RangeVal) val = ((RangeVal) val).actual;
     if (val instanceof Double) return (Double) val;
     Number num = null;
     if (val instanceof String) {
@@ -446,27 +566,12 @@ public class Clause implements MapWriter, Comparable<Clause> {
       num = (Number) val;
     }
 
-    if (num != null)  {
+    if (num != null) {
       return num.doubleValue();
     }
     throw new RuntimeException(name + ": " + val + "not a valid number");
   }
 
-  private static final Map<String, ValidateInfo> validatetypes = new HashMap<>();
+  public static final String METRICS_PREFIX = "metrics:";
 
-  static {
-    validatetypes.put("collection", new ValidateInfo(String.class, null, null, null));
-    validatetypes.put("shard", new ValidateInfo(String.class, null, null, null));
-    validatetypes.put("replica", new ValidateInfo(Long.class, null, 0L, null));
-    validatetypes.put(ImplicitSnitch.PORT, new ValidateInfo(Long.class, null, 1L, 65535L));
-    validatetypes.put(ImplicitSnitch.DISK, new ValidateInfo(Double.class, null, 0d, Double.MAX_VALUE));
-    validatetypes.put(ImplicitSnitch.NODEROLE, new ValidateInfo(String.class, Collections.singleton("overseer"), null, null));
-    validatetypes.put(ImplicitSnitch.CORES, new ValidateInfo(Long.class, null, 0L, Long.MAX_VALUE));
-    validatetypes.put(ImplicitSnitch.SYSLOADAVG, new ValidateInfo(Double.class, null, 0d, 100d));
-    validatetypes.put(ImplicitSnitch.HEAPUSAGE, new ValidateInfo(Double.class, null, 0d, null));
-    validatetypes.put("NUMBER", new ValidateInfo(Long.class, null, 0L, Long.MAX_VALUE));//generic number validation
-    validatetypes.put("STRING", new ValidateInfo(String.class, null, null, null));//generic string validation
-    validatetypes.put("node", new ValidateInfo(String.class, null, null, null));
-    for (String ip : ImplicitSnitch.IP_SNITCHES) validatetypes.put(ip, new ValidateInfo(Long.class, null, 0L, 255L));
-  }
 }

@@ -49,8 +49,11 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
 
   private static class SimpleTopScoreDocCollector extends TopScoreDocCollector {
 
-    SimpleTopScoreDocCollector(int numHits) {
+    private final int totalHitsThreshold;
+
+    SimpleTopScoreDocCollector(int numHits, int totalHitsThreshold) {
       super(numHits);
+      this.totalHitsThreshold = totalHitsThreshold;
     }
 
     @Override
@@ -59,16 +62,37 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
       final int docBase = context.docBase;
       return new ScorerLeafCollector() {
 
+        private void updateMinCompetitiveScore() {
+          // since we tie-break on doc id and collect in doc id order, we can require
+          // the next float
+          scorer.setMinCompetitiveScore(Math.nextUp(pqTop.score));
+          totalHitsRelation = TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO;
+        }
+
+        @Override
+        public void setScorer(Scorer scorer) throws IOException {
+          super.setScorer(scorer);
+          if (totalHits >= totalHitsThreshold
+              && pqTop != null
+              && pqTop.score != Float.NEGATIVE_INFINITY) {
+            updateMinCompetitiveScore();
+          }
+        }
+
         @Override
         public void collect(int doc) throws IOException {
           float score = scorer.score();
 
-          // This collector cannot handle these scores:
-          assert score != Float.NEGATIVE_INFINITY;
-          assert !Float.isNaN(score);
+          // This collector relies on the fact that scorers produce positive values:
+          assert score >= 0; // NOTE: false for NaN
 
           totalHits++;
           if (score <= pqTop.score) {
+            if (totalHitsRelation == TotalHits.Relation.EQUAL_TO && totalHits >= totalHitsThreshold) {
+              // we just reached totalHitsThreshold, we can start setting the min
+              // competitive score now
+              updateMinCompetitiveScore();
+            }
             // Since docs are returned in-order (i.e., increasing doc Id), a document
             // with equal score to pqTop.score cannot compete since HitQueue favors
             // documents with lower doc Ids. Therefore reject those docs too.
@@ -77,11 +101,18 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
           pqTop.doc = doc + docBase;
           pqTop.score = score;
           pqTop = pq.updateTop();
+          if (totalHits >= totalHitsThreshold && pqTop.score != Float.NEGATIVE_INFINITY) { // -Infinity is the score of sentinels
+            updateMinCompetitiveScore();
+          }
         }
 
       };
     }
 
+    @Override
+    public ScoreMode scoreMode() {
+      return totalHitsThreshold == Integer.MAX_VALUE ? ScoreMode.COMPLETE : ScoreMode.TOP_SCORES;
+    }
   }
 
   private static class PagingTopScoreDocCollector extends TopScoreDocCollector {
@@ -102,7 +133,9 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
 
     @Override
     protected TopDocs newTopDocs(ScoreDoc[] results, int start) {
-      return results == null ? new TopDocs(totalHits, new ScoreDoc[0], Float.NaN) : new TopDocs(totalHits, results);
+      return results == null
+          ? new TopDocs(new TotalHits(totalHits, totalHitsRelation), new ScoreDoc[0])
+          : new TopDocs(new TotalHits(totalHits, totalHitsRelation), results);
     }
 
     @Override
@@ -114,9 +147,8 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
         public void collect(int doc) throws IOException {
           float score = scorer.score();
 
-          // This collector cannot handle these scores:
-          assert score != Float.NEGATIVE_INFINITY;
-          assert !Float.isNaN(score);
+          // This collector relies on the fact that scorers produce positive values:
+          assert score >= 0; // NOTE: false for NaN
 
           totalHits++;
 
@@ -142,36 +174,51 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
 
   /**
    * Creates a new {@link TopScoreDocCollector} given the number of hits to
-   * collect and whether documents are scored in order by the input
-   * {@link Scorer} to {@link LeafCollector#setScorer(Scorer)}.
+   * collect and the number of hits to count accurately.
    *
+   * <p><b>NOTE</b>: If the total hit count of the top docs is less than
+   * {@code totalHitsThreshold} then this value is accurate. On the other hand,
+   * if the {@link TopDocs#totalHits} value is greater than or equal to
+   * {@code totalHitsThreshold} then its value is a lower bound of the hit
+   * count. A value of {@link Integer#MAX_VALUE} will make the hit count
+   * accurate but will also likely make query processing slower.
    * <p><b>NOTE</b>: The instances returned by this method
    * pre-allocate a full array of length
    * <code>numHits</code>, and fill the array with sentinel
    * objects.
    */
-  public static TopScoreDocCollector create(int numHits) {
-    return create(numHits, null);
+  public static TopScoreDocCollector create(int numHits, int totalHitsThreshold) {
+    return create(numHits, null, totalHitsThreshold);
   }
 
   /**
    * Creates a new {@link TopScoreDocCollector} given the number of hits to
-   * collect, the bottom of the previous page, and whether documents are scored in order by the input
-   * {@link Scorer} to {@link LeafCollector#setScorer(Scorer)}.
+   * collect, the bottom of the previous page, and the number of hits to count
+   * accurately.
    *
+   * <p><b>NOTE</b>: If the total hit count of the top docs is less than
+   * {@code totalHitsThreshold} then this value is accurate. On the other hand,
+   * if the {@link TopDocs#totalHits} value is greater than or equal to
+   * {@code totalHitsThreshold} then its value is a lower bound of the hit
+   * count. A value of {@link Integer#MAX_VALUE} will make the hit count
+   * accurate but will also likely make query processing slower.
    * <p><b>NOTE</b>: The instances returned by this method
    * pre-allocate a full array of length
    * <code>numHits</code>, and fill the array with sentinel
    * objects.
    */
-  public static TopScoreDocCollector create(int numHits, ScoreDoc after) {
+  public static TopScoreDocCollector create(int numHits, ScoreDoc after, int totalHitsThreshold) {
 
     if (numHits <= 0) {
       throw new IllegalArgumentException("numHits must be > 0; please use TotalHitCountCollector if you just need the total hit count");
     }
 
+    if (totalHitsThreshold <= 0) {
+      throw new IllegalArgumentException("totalHitsThreshold must be > 0, got " + totalHitsThreshold);
+    }
+
     if (after == null) {
-      return new SimpleTopScoreDocCollector(numHits);
+      return new SimpleTopScoreDocCollector(numHits, totalHitsThreshold);
     } else {
       return new PagingTopScoreDocCollector(numHits, after);
     }
@@ -193,23 +240,11 @@ public abstract class TopScoreDocCollector extends TopDocsCollector<ScoreDoc> {
       return EMPTY_TOPDOCS;
     }
 
-    // We need to compute maxScore in order to set it in TopDocs. If start == 0,
-    // it means the largest element is already in results, use its score as
-    // maxScore. Otherwise pop everything else, until the largest element is
-    // extracted and use its score as maxScore.
-    float maxScore = Float.NaN;
-    if (start == 0) {
-      maxScore = results[0].score;
-    } else {
-      for (int i = pq.size(); i > 1; i--) { pq.pop(); }
-      maxScore = pq.pop().score;
-    }
-
-    return new TopDocs(totalHits, results, maxScore);
+    return new TopDocs(new TotalHits(totalHits, totalHitsRelation), results);
   }
 
   @Override
-  public boolean needsScores() {
-    return true;
+  public ScoreMode scoreMode() {
+    return ScoreMode.COMPLETE;
   }
 }

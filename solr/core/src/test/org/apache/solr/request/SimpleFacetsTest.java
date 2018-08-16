@@ -568,6 +568,36 @@ public class SimpleFacetsTest extends SolrTestCaseJ4 {
 
 
   @Test
+  public void testFacetMatches() {
+    final String[][] uifSwitch = new String[][] {
+        new String[]{"f.trait_s.facet.method", "uif"},
+        new String[]{"facet.method", "uif"}
+    };
+    final String[] none = new String[]{};
+    for (String[] aSwitch : uifSwitch) {
+      for(String[] methodParam : new String[][]{ none, aSwitch}) {
+        assertQ("check facet.match filters facets returned",
+            req(methodParam
+                , "q", "id:[42 TO 47]"
+                , "facet", "true"
+                , "facet.field", "trait_s"
+                , "facet.matches", ".*o.*"
+            )
+            , "*[count(//doc)=6]"
+
+            , "//lst[@name='facet_counts']/lst[@name='facet_queries']"
+
+            , "//lst[@name='facet_counts']/lst[@name='facet_fields']"
+            , "//lst[@name='facet_fields']/lst[@name='trait_s']"
+            , "*[count(//lst[@name='trait_s']/int)=2]"
+            , "//lst[@name='trait_s']/int[@name='Tool'][.='2']"
+            , "//lst[@name='trait_s']/int[@name='Obnoxious'][.='2']"
+        );
+      }
+    }
+  }
+
+  @Test
   public void testSimpleFacetCounts() {
  
     assertQ("standard request handler returns all matches",
@@ -1500,9 +1530,9 @@ public class SimpleFacetsTest extends SolrTestCaseJ4 {
     final String meta = pre + "/../";
 
     String start = "0.0";
-    String gap = (new Double( (double)Float.MAX_VALUE )).toString();
-    String end = (new Double( ((double)Float.MAX_VALUE) * 3D )).toString();
-    String mid = (new Double( ((double)Float.MAX_VALUE) * 2D )).toString();
+    String gap = Double.toString(Float.MAX_VALUE );
+    String end = Double.toString(((double) Float.MAX_VALUE) * 3D);
+    String mid = Double.toString(((double) Float.MAX_VALUE) * 2D);
 
     assertQ(f+": checking counts for lower",
             req( "q", "id_i1:[30 TO 60]"
@@ -1777,9 +1807,9 @@ public class SimpleFacetsTest extends SolrTestCaseJ4 {
     final String meta = pre + "/../";
 
     String start = "0";
-    String gap = (new Long( (long)Integer.MAX_VALUE )).toString();
-    String end = (new Long( ((long)Integer.MAX_VALUE) * 3L )).toString();
-    String mid = (new Long( ((long)Integer.MAX_VALUE) * 2L )).toString();
+    String gap = Long.toString(Integer.MAX_VALUE );
+    String end = Long.toString( ((long)Integer.MAX_VALUE) * 3L );
+    String mid = Long.toString(((long)Integer.MAX_VALUE) * 2L );
 
     assertQ(f+": checking counts for lower",
             req( "q", "id_i1:[30 TO 60]"

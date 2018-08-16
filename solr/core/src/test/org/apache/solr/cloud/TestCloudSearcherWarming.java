@@ -17,31 +17,21 @@
 
 package org.apache.solr.cloud;
 
-import java.io.IOException;
 import java.lang.invoke.MethodHandles;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
-import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrResponse;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
-import org.apache.solr.client.solrj.response.SolrResponseBase;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.CollectionStatePredicate;
 import org.apache.solr.common.cloud.CollectionStateWatcher;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
-import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.ContentStream;
-import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.SolrEventListener;
@@ -104,14 +94,13 @@ public class TestCloudSearcherWarming extends SolrCloudTestCase {
     waitForState("The collection should have 1 shard and 1 replica", collectionName, clusterShape(1, 1));
 
     solrClient.setDefaultCollection(collectionName);
-    solrClient.getZkStateReader().registerCore(collectionName);
 
     String addListenerCommand = "{" +
         "'add-listener' : {'name':'newSearcherListener','event':'newSearcher', 'class':'" + SleepingSolrEventListener.class.getName() + "'}" +
         "'add-listener' : {'name':'firstSearcherListener','event':'firstSearcher', 'class':'" + SleepingSolrEventListener.class.getName() + "'}" +
         "}";
 
-    ConfigRequest request = new ConfigRequest(SolrRequest.METHOD.POST, "/config", addListenerCommand);
+    ConfigRequest request = new ConfigRequest(addListenerCommand);
     solrClient.request(request);
 
     solrClient.add(new SolrInputDocument("id", "1"));
@@ -144,14 +133,13 @@ public class TestCloudSearcherWarming extends SolrCloudTestCase {
     waitForState("The collection should have 1 shard and 1 replica", collectionName, clusterShape(1, 1));
 
     solrClient.setDefaultCollection(collectionName);
-    solrClient.getZkStateReader().registerCore(collectionName);
 
     String addListenerCommand = "{" +
         "'add-listener' : {'name':'newSearcherListener','event':'newSearcher', 'class':'" + SleepingSolrEventListener.class.getName() + "'}" +
         "'add-listener' : {'name':'firstSearcherListener','event':'firstSearcher', 'class':'" + SleepingSolrEventListener.class.getName() + "'}" +
         "}";
 
-    ConfigRequest request = new ConfigRequest(SolrRequest.METHOD.POST, "/config", addListenerCommand);
+    ConfigRequest request = new ConfigRequest(addListenerCommand);
     solrClient.request(request);
 
     solrClient.add(new SolrInputDocument("id", "1"));
@@ -330,30 +318,6 @@ public class TestCloudSearcherWarming extends SolrCloudTestCase {
         }
         log.info("Finished sleeping for {} on newSearcher: {}, currentSearcher: {} belonging to (newest) core: {}, id: {}", sleepTime.get(), newSearcher, currentSearcher, newSearcher.getCore().getName(), newSearcher.getCore());
       }
-    }
-  }
-
-  public static class ConfigRequest extends SolrRequest {
-    protected final String message;
-
-    public ConfigRequest(METHOD m, String path, String message) {
-      super(m, path);
-      this.message = message;
-    }
-
-    @Override
-    public SolrParams getParams() {
-      return null;
-    }
-
-    @Override
-    public Collection<ContentStream> getContentStreams() throws IOException {
-      return message != null ? Collections.singletonList(new ContentStreamBase.StringStream(message)) : null;
-    }
-
-    @Override
-    protected SolrResponse createResponse(SolrClient client) {
-      return new SolrResponseBase();
     }
   }
 }

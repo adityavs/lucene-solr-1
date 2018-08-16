@@ -56,6 +56,7 @@ import java.util.zip.Checksum;
 import java.util.zip.DeflaterOutputStream;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.output.CloseShieldOutputStream;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
@@ -82,7 +83,6 @@ import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.common.util.SuppressForbidden;
 import org.apache.solr.core.CloseHook;
-import static org.apache.solr.core.Config.assertWarnOrFail;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.DirectoryFactory.DirContext;
 import org.apache.solr.core.IndexDeletionPolicyWrapper;
@@ -91,10 +91,9 @@ import org.apache.solr.core.SolrDeletionPolicy;
 import org.apache.solr.core.SolrEventListener;
 import org.apache.solr.core.backup.repository.BackupRepository;
 import org.apache.solr.core.backup.repository.LocalFileSystemRepository;
-import org.apache.solr.core.snapshots.SolrSnapshotMetaDataManager;
+import org.apache.solr.handler.IndexFetcher.IndexFetchResult;
 import org.apache.solr.metrics.MetricsMap;
 import org.apache.solr.metrics.SolrMetricManager;
-import org.apache.solr.handler.IndexFetcher.IndexFetchResult;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.search.SolrIndexSearcher;
@@ -111,6 +110,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
 import static org.apache.solr.common.params.CommonParams.NAME;
+import static org.apache.solr.core.Config.assertWarnOrFail;
 
 /**
  * <p> A Handler which provides a REST API for replication and serves replication requests from Slaves. </p>
@@ -530,39 +530,16 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
     return status;
   }
 
-  private void doSnapShoot(SolrParams params, SolrQueryResponse rsp,
-      SolrQueryRequest req) {
+  private void doSnapShoot(SolrParams params, SolrQueryResponse rsp, SolrQueryRequest req) {
     try {
       int numberToKeep = params.getInt(NUMBER_BACKUPS_TO_KEEP_REQUEST_PARAM, 0);
       if (numberToKeep > 0 && numberBackupsToKeep > 0) {
-        throw new SolrException(ErrorCode.BAD_REQUEST, "Cannot use "
-            + NUMBER_BACKUPS_TO_KEEP_REQUEST_PARAM + " if "
-            + NUMBER_BACKUPS_TO_KEEP_INIT_PARAM
-            + " was specified in the configuration.");
+        throw new SolrException(ErrorCode.BAD_REQUEST, "Cannot use " + NUMBER_BACKUPS_TO_KEEP_REQUEST_PARAM +
+            " if " + NUMBER_BACKUPS_TO_KEEP_INIT_PARAM + " was specified in the configuration.");
       }
       numberToKeep = Math.max(numberToKeep, numberBackupsToKeep);
       if (numberToKeep < 1) {
         numberToKeep = Integer.MAX_VALUE;
-      }
-
-      IndexCommit indexCommit = null;
-      String commitName = params.get(CoreAdminParams.COMMIT_NAME);
-      if (commitName != null) {
-        SolrSnapshotMetaDataManager snapshotMgr = core.getSnapshotMetaDataManager();
-        Optional<IndexCommit> commit = snapshotMgr.getIndexCommitByName(commitName);
-        if(commit.isPresent()) {
-          indexCommit = commit.get();
-        } else {
-          throw new SolrException(ErrorCode.BAD_REQUEST, "Unable to find an index commit with name " + commitName +
-              " for core " + core.getName());
-        }
-      } else {
-        IndexDeletionPolicyWrapper delPolicy = core.getDeletionPolicy();
-        indexCommit = delPolicy.getLatestCommit();
-
-        if (indexCommit == null) {
-          indexCommit = req.getSearcher().getIndexReader().getIndexCommit();
-        }
       }
 
       String location = params.get(CoreAdminParams.BACKUP_LOCATION);
@@ -586,12 +563,12 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
 
       // small race here before the commit point is saved
       URI locationUri = repo.createURI(location);
+      String commitName = params.get(CoreAdminParams.COMMIT_NAME);
       SnapShooter snapShooter = new SnapShooter(repo, core, locationUri, params.get(NAME), commitName);
       snapShooter.validateCreateSnapshot();
-      snapShooter.createSnapAsync(indexCommit, numberToKeep, (nl) -> snapShootDetails = nl);
-
+      snapShooter.createSnapAsync(numberToKeep, (nl) -> snapShootDetails = nl);
     } catch (Exception e) {
-      LOG.warn("Exception during creating a snapshot", e);
+      LOG.error("Exception during creating a snapshot", e);
       rsp.add("exception", e);
     }
   }
@@ -690,9 +667,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
     }
     rsp.add(CMD_GET_FILE_LIST, result);
 
-    // fetch list of tlog files only if cdcr is activated
-    if (solrParams.getBool(TLOG_FILES, true) && core.getUpdateHandler().getUpdateLog() != null
-        && core.getUpdateHandler().getUpdateLog() instanceof CdcrUpdateLog) {
+    if (solrParams.getBool(TLOG_FILES, false)) {
       try {
         List<Map<String, Object>> tlogfiles = getTlogFileList(commit);
         LOG.info("Adding tlog files to list: " + tlogfiles);
@@ -850,34 +825,30 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
    * returns the CommitVersionInfo for the current searcher, or null on error.
    */
   private CommitVersionInfo getIndexVersion() {
-    CommitVersionInfo v = null;
-    RefCounted<SolrIndexSearcher> searcher = core.getSearcher();
     try {
-      v = CommitVersionInfo.build(searcher.get().getIndexReader().getIndexCommit());
+      return core.withSearcher(searcher -> CommitVersionInfo.build(searcher.getIndexReader().getIndexCommit()));
     } catch (IOException e) {
       LOG.warn("Unable to get index commit: ", e);
-    } finally {
-      searcher.decref();
+      return null;
     }
-    return v;
   }
 
   @Override
-  public void initializeMetrics(SolrMetricManager manager, String registry, String scope) {
-    super.initializeMetrics(manager, registry, scope);
+  public void initializeMetrics(SolrMetricManager manager, String registry, String tag, String scope) {
+    super.initializeMetrics(manager, registry, tag, scope);
 
-    manager.registerGauge(this, registry, () -> core != null ? NumberUtils.readableSize(core.getIndexSize()) : "", true,
-        "indexSize", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? getIndexVersion().toString() : ""), true,
-        "indexVersion", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? getIndexVersion().generation : 0), true,
-        GENERATION, getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> core != null ? core.getIndexDir() : "", true,
-        "indexPath", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> isMaster, true,
-        "isMaster", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> isSlave, true,
-        "isSlave", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? NumberUtils.readableSize(core.getIndexSize()) : ""),
+        tag, true, "indexSize", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? getIndexVersion().toString() : ""),
+        tag, true, "indexVersion", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? getIndexVersion().generation : 0),
+        tag, true, GENERATION, getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> (core != null && !core.isClosed() ? core.getIndexDir() : ""),
+        tag, true, "indexPath", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> isMaster,
+        tag, true, "isMaster", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> isSlave,
+        tag, true, "isSlave", getCategory().toString(), scope);
     final MetricsMap fetcherMap = new MetricsMap((detailed, map) -> {
       IndexFetcher fetcher = currentIndexFetcher;
       if (fetcher != null) {
@@ -906,13 +877,13 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
         addVal(map, IndexFetcher.CONF_FILES_REPLICATED, props, String.class);
       }
     });
-    manager.registerGauge(this, registry, fetcherMap, true, "fetcher", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> isMaster && includeConfFiles != null ? includeConfFiles : "", true,
-        "confFilesToReplicate", getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> isMaster ? getReplicateAfterStrings() : Collections.<String>emptyList(), true,
-        REPLICATE_AFTER, getCategory().toString(), scope);
-    manager.registerGauge(this, registry, () -> isMaster && replicationEnabled.get(), true,
-        "replicationEnabled", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, fetcherMap, tag, true, "fetcher", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> isMaster && includeConfFiles != null ? includeConfFiles : "",
+        tag, true, "confFilesToReplicate", getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> isMaster ? getReplicateAfterStrings() : Collections.<String>emptyList(),
+        tag, true, REPLICATE_AFTER, getCategory().toString(), scope);
+    manager.registerGauge(this, registry, () -> isMaster && replicationEnabled.get(),
+        tag, true, "replicationEnabled", getCategory().toString(), scope);
   }
 
   /**
@@ -1199,7 +1170,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
   }
 
   @Override
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings({"unchecked", "resource"})
   public void inform(SolrCore core) {
     this.core = core;
     registerCloseHook();
@@ -1282,7 +1253,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
         replicateOnStart = true;
         RefCounted<SolrIndexSearcher> s = core.getNewestSearcher(false);
         try {
-          DirectoryReader reader = s==null ? null : s.get().getIndexReader();
+          DirectoryReader reader = (s == null) ? null : s.get().getIndexReader();
           if (reader!=null && reader.getIndexCommit() != null && reader.getIndexCommit().getGeneration() != 1L) {
             try {
               if(replicateOnOptimize){
@@ -1443,7 +1414,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
             }
             SnapShooter snapShooter = new SnapShooter(core, null, null);
             snapShooter.validateCreateSnapshot();
-            snapShooter.createSnapAsync(currentCommitPoint, numberToKeep, (nl) -> snapShootDetails = nl);
+            snapShooter.createSnapAsync(numberToKeep, (nl) -> snapShootDetails = nl);
           } catch (Exception e) {
             LOG.error("Exception while snapshooting", e);
           }
@@ -1541,6 +1512,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
     }
 
     protected void createOutputStream(OutputStream out) {
+      out = new CloseShieldOutputStream(out); // DeflaterOutputStream requires a close call, but don't close the request outputstream
       if (Boolean.parseBoolean(compress)) {
         fos = new FastOutputStream(new DeflaterOutputStream(out));
       } else {
@@ -1567,14 +1539,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
       try {
         initWrite();
 
-        RefCounted<SolrIndexSearcher> sref = core.getSearcher();
-        Directory dir;
-        try {
-          SolrIndexSearcher searcher = sref.get();
-          dir = searcher.getIndexReader().directory();
-        } finally {
-          sref.decref();
-        }
+        Directory dir = core.withSearcher(searcher -> searcher.getIndexReader().directory());
         in = dir.openInput(fileName, IOContext.READONCE);
         // if offset is mentioned move the pointer to that point
         if (offset != -1) in.seek(offset);
@@ -1605,7 +1570,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
           }
           if (read != buf.length) {
             writeNothingAndFlush();
-            fos.close();
+            fos.close(); // we close because DeflaterOutputStream requires a close call, but but the request outputstream is protected
             break;
           }
           offset += read;
@@ -1664,7 +1629,7 @@ public class ReplicationHandler extends RequestHandlerBase implements SolrCoreAw
             long bytesRead = channel.read(bb);
             if (bytesRead <= 0) {
               writeNothingAndFlush();
-              fos.close();
+              fos.close(); // we close because DeflaterOutputStream requires a close call, but but the request outputstream is protected
               break;
             }
             fos.writeInt((int) bytesRead);

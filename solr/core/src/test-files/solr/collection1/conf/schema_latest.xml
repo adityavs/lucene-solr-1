@@ -343,10 +343,7 @@
      standard package such as org.apache.solr.analysis
   -->
 
-  <!-- The StrField type is not analyzed, but indexed/stored verbatim.
-     It supports doc values but in that case the field needs to be
-     single-valued and either required or have a default value.
-    -->
+  <!-- The StrField type is not analyzed, but indexed/stored verbatim. -->
   <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
 
   <!-- boolean type: "true" or "false" -->
@@ -385,6 +382,7 @@
   <fieldType name="float" class="${solr.tests.FloatFieldType}" docValues="${solr.tests.numeric.dv}" precisionStep="0" positionIncrementGap="0"/>
   <fieldType name="long" class="${solr.tests.LongFieldType}" docValues="${solr.tests.numeric.dv}" precisionStep="0" positionIncrementGap="0"/>
   <fieldType name="double" class="${solr.tests.DoubleFieldType}" docValues="${solr.tests.numeric.dv}" precisionStep="0" positionIncrementGap="0"/>
+  <fieldType name="date" class="${solr.tests.DateFieldType}" docValues="${solr.tests.numeric.dv}" precisionStep="0" positionIncrementGap="0"/>
 
   <!--
    Numeric field types that index each value at various levels of precision
@@ -423,7 +421,6 @@
 
        Note: For faster range queries, consider the tdate type
     -->
-  <fieldType name="date" class="${solr.tests.DateFieldType}" precisionStep="0" positionIncrementGap="0"/>
 
   <!-- A Trie based date field for faster date range queries and date faceting. -->
   <fieldType name="tdate" class="${solr.tests.DateFieldType}" precisionStep="6" positionIncrementGap="0"/>

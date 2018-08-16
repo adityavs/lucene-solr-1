@@ -29,6 +29,7 @@ import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopFieldDocs;
+import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.bkd.BKDReader;
@@ -193,6 +194,7 @@ public class FloatPointNearestNeighbor {
     }
   }
 
+  /** Holds one hit from {@link FloatPointNearestNeighbor#nearest} */
   static class NearestHit {
     public int docID;
     public double distanceSquared;
@@ -203,7 +205,7 @@ public class FloatPointNearestNeighbor {
     }
   }
 
-  public static NearestHit[] nearest(List<BKDReader> readers, List<Bits> liveDocs, List<Integer> docBases, final int topN, float[] origin) throws IOException {
+  private static NearestHit[] nearest(List<BKDReader> readers, List<Bits> liveDocs, List<Integer> docBases, final int topN, float[] origin) throws IOException {
 
     // System.out.println("NEAREST: readers=" + readers + " liveDocs=" + liveDocs + " origin: " + Arrays.toString(origin));
 
@@ -377,6 +379,6 @@ public class FloatPointNearestNeighbor {
       NearestHit hit = hits[i];
       scoreDocs[i] = new FieldDoc(hit.docID, 0.0f, new Object[] { (float)Math.sqrt(hit.distanceSquared) });
     }
-    return new TopFieldDocs(totalHits, scoreDocs, null, 0.0f);
+    return new TopFieldDocs(new TotalHits(totalHits, TotalHits.Relation.EQUAL_TO), scoreDocs, null);
   }
 }

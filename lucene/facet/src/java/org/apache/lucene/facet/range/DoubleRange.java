@@ -28,6 +28,7 @@ import org.apache.lucene.search.DoubleValues;
 import org.apache.lucene.search.DoubleValuesSource;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
@@ -88,7 +89,23 @@ public final class DoubleRange extends Range {
 
   @Override
   public String toString() {
-    return "DoubleRange(" + min + " to " + max + ")";
+    return "DoubleRange(" + label + ": " + min + " to " + max + ")";
+  }
+
+  @Override
+  public boolean equals(Object _that) {
+    if (_that instanceof DoubleRange == false) {
+      return false;
+    }
+    DoubleRange that = (DoubleRange) _that;
+    return that.label.equals(this.label) &&
+      Double.compare(that.min, this.min) == 0 &&
+      Double.compare(that.max, this.max) == 0;
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(label, min, max);
   }
 
   private static class ValueSourceQuery extends Query {
@@ -136,10 +153,10 @@ public final class DoubleRange extends Range {
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher, boolean needsScores, float boost) throws IOException {
+    public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
       final Weight fastMatchWeight = fastMatchQuery == null
           ? null
-          : searcher.createWeight(fastMatchQuery, false, 1f);
+          : searcher.createWeight(fastMatchQuery, ScoreMode.COMPLETE_NO_SCORES, 1f);
 
       return new ConstantScoreWeight(this, boost) {
         @Override
@@ -171,6 +188,12 @@ public final class DoubleRange extends Range {
           };
           return new ConstantScoreScorer(this, score(), twoPhase);
         }
+
+        @Override
+        public boolean isCacheable(LeafReaderContext ctx) {
+          return valueSource.isCacheable(ctx);
+        }
+
       };
     }
 

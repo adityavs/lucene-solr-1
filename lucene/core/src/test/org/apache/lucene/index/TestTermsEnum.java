@@ -46,7 +46,7 @@ import org.apache.lucene.util.automaton.Automaton;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.automaton.RegExp;
 
-@SuppressCodecs({ "SimpleText", "Memory", "Direct" })
+@SuppressCodecs({ "SimpleText", "Direct" })
 public class TestTermsEnum extends LuceneTestCase {
 
   public void test() throws Exception {
@@ -737,7 +737,7 @@ public class TestTermsEnum extends LuceneTestCase {
     w.addDocument(doc);
 
     doc = new Document();
-    doc.add(newStringField("field", "bbb", Field.Store.NO));
+    doc.add(newTextField("field", "bbb", Field.Store.NO));
     w.addDocument(doc);
 
     doc = new Document();

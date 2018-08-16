@@ -18,12 +18,14 @@ package org.apache.solr.client.solrj.io.stream;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
@@ -53,6 +55,7 @@ import org.apache.solr.common.util.NamedList;
 /**
  *  The FacetStream abstracts the output from the JSON facet API as a Stream of Tuples. This provides an alternative to the
  *  RollupStream which uses Map/Reduce to perform aggregations.
+ * @since 6.0.0
  **/
 
 public class FacetStream extends TupleStream implements Expressible  {
@@ -301,9 +304,8 @@ public class FacetStream extends TupleStream implements Expressible  {
     
     child.setImplementingClass("Solr/Lucene");
     child.setExpressionType(ExpressionType.DATASTORE);
-    ModifiableSolrParams tmpParams = new ModifiableSolrParams(SolrParams.toMultiMap(params.toNamedList()));
 
-    child.setExpression(tmpParams.getMap().entrySet().stream().map(e -> String.format(Locale.ROOT, "%s=%s", e.getKey(), e.getValue())).collect(Collectors.joining(",")));
+    child.setExpression(params.stream().map(e -> String.format(Locale.ROOT, "%s=%s", e.getKey(), Arrays.toString(e.getValue()))).collect(Collectors.joining(",")));
     
     explanation.addChild(child);
     
@@ -322,9 +324,9 @@ public class FacetStream extends TupleStream implements Expressible  {
     if(cache != null) {
       cloudSolrClient = cache.getCloudSolrClient(zkHost);
     } else {
-      cloudSolrClient = new Builder()
-          .withZkHost(zkHost)
-          .build();
+      final List<String> hosts = new ArrayList<>();
+      hosts.add(zkHost);
+      cloudSolrClient = new Builder(hosts, Optional.empty()).build();
     }
 
     FieldComparator[] adjustedSorts = adjustSorts(buckets, bucketSorts);
@@ -347,7 +349,9 @@ public class FacetStream extends TupleStream implements Expressible  {
 
   public void close() throws IOException {
     if(cache == null) {
-      cloudSolrClient.close();
+      if (cloudSolrClient != null) {
+        cloudSolrClient.close();
+      }
     }
   }
 

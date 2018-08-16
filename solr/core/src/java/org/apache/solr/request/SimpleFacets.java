@@ -40,6 +40,7 @@ import java.util.function.Predicate;
 
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.MultiPostingsEnum;
 import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Terms;
@@ -89,7 +90,7 @@ import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.search.SortedIntDocSet;
 import org.apache.solr.search.SyntaxError;
 import org.apache.solr.search.facet.FacetDebugInfo;
-import org.apache.solr.search.facet.FacetProcessor;
+import org.apache.solr.search.facet.FacetRequest;
 import org.apache.solr.search.grouping.GroupingSpecification;
 import org.apache.solr.util.BoundedTreeSet;
 import org.apache.solr.util.DefaultSolrThreadFactory;
@@ -259,7 +260,7 @@ public class SimpleFacets {
     // get the new base docset for this facet
     DocSet base = searcher.getDocSet(qlist);
     if (rb.grouping() && rb.getGroupingSpec().isTruncateGroups()) {
-      Grouping grouping = new Grouping(searcher, null, rb.getQueryCommand(), false, 0, false);
+      Grouping grouping = new Grouping(searcher, null, rb.createQueryCommand(), false, 0, false);
       grouping.setWithinGroupSort(rb.getGroupingSpec().getSortWithinGroup());
       if (rb.getGroupingSpec().getFields().length > 0) {
         grouping.addFieldCommand(rb.getGroupingSpec().getFields()[0], req);
@@ -348,6 +349,16 @@ public class SimpleFacets {
     ENUM, FC, FCS, UIF;
   }
 
+  /**
+   * Create a new bytes ref filter for excluding facet terms.
+   *
+   * This method by default uses the {@link FacetParams#FACET_EXCLUDETERMS} parameter
+   * but custom SimpleFacets classes could use a different implementation.
+   *
+   * @param field the field to check for facet term filters
+   * @param params the request parameter object
+   * @return A predicate for filtering terms or null if no filters are applicable.
+   */
   protected Predicate<BytesRef> newExcludeBytesRefFilter(String field, SolrParams params) {
     final String exclude = params.getFieldParam(field, FacetParams.FACET_EXCLUDETERMS);
     if (exclude == null) {
@@ -364,30 +375,37 @@ public class SimpleFacets {
     };
   }
 
+  /**
+   * Create a new bytes ref filter for filtering facet terms. If more than one filter is
+   * applicable the applicable filters will be returned as an {@link Predicate#and(Predicate)}
+   * of all such filters.
+   *
+   * @param field the field to check for facet term filters
+   * @param params the request parameter object
+   * @return A predicate for filtering terms or null if no filters are applicable.
+   */
   protected Predicate<BytesRef> newBytesRefFilter(String field, SolrParams params) {
     final String contains = params.getFieldParam(field, FacetParams.FACET_CONTAINS);
 
-    final Predicate<BytesRef> containsFilter;
+    Predicate<BytesRef> finalFilter = null;
+
     if (contains != null) {
       final boolean containsIgnoreCase = params.getFieldBool(field, FacetParams.FACET_CONTAINS_IGNORE_CASE, false);
-      containsFilter = new SubstringBytesRefFilter(contains, containsIgnoreCase);
-    } else {
-      containsFilter = null;
+      finalFilter = new SubstringBytesRefFilter(contains, containsIgnoreCase);
+    }
+
+    final String regex = params.getFieldParam(field, FacetParams.FACET_MATCHES);
+    if (regex != null) {
+      final RegexBytesRefFilter regexBytesRefFilter = new RegexBytesRefFilter(regex);
+      finalFilter = (finalFilter == null) ? regexBytesRefFilter : finalFilter.and(regexBytesRefFilter);
     }
 
     final Predicate<BytesRef> excludeFilter = newExcludeBytesRefFilter(field, params);
-
-    if (containsFilter == null && excludeFilter == null) {
-      return null;
+    if (excludeFilter != null) {
+      finalFilter = (finalFilter == null) ? excludeFilter : finalFilter.and(excludeFilter);
     }
 
-    if (containsFilter != null && excludeFilter == null) {
-      return containsFilter;
-    } else if (containsFilter == null && excludeFilter != null) {
-      return excludeFilter;
-    }
-
-    return containsFilter.and(excludeFilter);
+    return finalFilter;
   }
 
   /**
@@ -493,6 +511,7 @@ public class SimpleFacets {
             }
             if (termFilter != null) {
               throw new SolrException(ErrorCode.BAD_REQUEST, "BytesRef term filters ("
+                      + FacetParams.FACET_MATCHES + ", "
                       + FacetParams.FACET_CONTAINS + ", "
                       + FacetParams.FACET_EXCLUDETERMS + ") are not supported on numeric types");
             }
@@ -546,29 +565,20 @@ public class SimpleFacets {
             }
             jsonFacet.put(SORT, sortVal );
 
-            Map<String, Object> topLevel = new HashMap<>();
-            topLevel.put(field, jsonFacet);
-              
-            topLevel.put("processEmpty", true);
-
-            FacetProcessor fproc = FacetProcessor.createProcessor(rb.req, topLevel, // rb.getResults().docSet
-                                                                    docs );
             //TODO do we handle debug?  Should probably already be handled by the legacy code
-            fproc.process();
 
+            Object resObj = FacetRequest.parseOneFacetReq(req, jsonFacet).process(req, docs);
             //Go through the response to build the expected output for SimpleFacets
-            Object res = fproc.getResponse();
-            counts = new NamedList<Integer>();
-            if(res != null) {
-              SimpleOrderedMap<Object> som = (SimpleOrderedMap<Object>)res;
-              SimpleOrderedMap<Object> asdf = (SimpleOrderedMap<Object>) som.get(field);
+            counts = new NamedList<>();
+            if(resObj != null) {
+              NamedList<Object> res = (NamedList<Object>) resObj;
 
-              List<SimpleOrderedMap<Object>> buckets = (List<SimpleOrderedMap<Object>>)asdf.get("buckets");
-              for(SimpleOrderedMap<Object> b : buckets) {
+              List<NamedList<Object>> buckets = (List<NamedList<Object>>)res.get("buckets");
+              for(NamedList<Object> b : buckets) {
                 counts.add(b.get("val").toString(), (Integer)b.get("count"));
               }
               if(missing) {
-                SimpleOrderedMap<Object> missingCounts = (SimpleOrderedMap<Object>) asdf.get("missing");
+                NamedList<Object> missingCounts = (NamedList<Object>) res.get("missing");
                 counts.add(null, (Integer)missingCounts.get("count"));
               }
             }
@@ -928,9 +938,6 @@ public class SimpleFacets {
     IndexSchema schema = searcher.getSchema();
     FieldType ft = schema.getFieldType(field);
     assert !ft.isPointField(): "Point Fields don't support enum method";
-    
-    LeafReader r = searcher.getSlowAtomicReader();
-    
 
     boolean sortByCount = sort.equals("count") || sort.equals("true");
     final int maxsize = limit>=0 ? offset+limit : Integer.MAX_VALUE-1;
@@ -947,7 +954,7 @@ public class SimpleFacets {
       prefixTermBytes = new BytesRef(indexedPrefix);
     }
 
-    Terms terms = r.terms(field);
+    Terms terms = MultiFields.getTerms(searcher.getIndexReader(), field);
     TermsEnum termsEnum = null;
     SolrIndexSearcher.DocsEnumState deState = null;
     BytesRef term = null;
@@ -993,7 +1000,7 @@ public class SimpleFacets {
               if (deState == null) {
                 deState = new SolrIndexSearcher.DocsEnumState();
                 deState.fieldName = field;
-                deState.liveDocs = r.getLiveDocs();
+                deState.liveDocs = searcher.getLiveDocsBits();
                 deState.termsEnum = termsEnum;
                 deState.postingsEnum = postingsEnum;
               }

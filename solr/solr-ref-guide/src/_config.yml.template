@@ -69,18 +69,29 @@ asciidoc: {}
 # NOTE: If you add any attributes here for use in adoc files, you almost certainly need to also add
 # them to the <asciidoctor:convert/> ant task for building the PDF as well.
 solr-attributes: &solr-attributes-ref
+  solr-root-path: "../../../"
   solr-guide-draft-status: "${solr-guide-draft-status}"
   solr-guide-version: "${solr-guide-version}"
   solr-guide-version-path: "${solr-guide-version-path}"
   solr-docs-version: "${solr-docs-version}"
-  solr-javadocs: "${solr-javadocs}"
-  lucene-javadocs: "${lucene-javadocs}"
+  java-javadocs: "${javadoc.link}"
+  solr-javadocs: "${html-solr-javadocs}"
+  lucene-javadocs: "${html-lucene-javadocs}"
   build-date: "${DSTAMP}"
   build-year: "${current.year}"
-
+  ivy-commons-codec-version: "${ivyversions./commons-codec/commons-codec}"
+  ivy-dropwizard-version: "${ivyversions.io.dropwizard.metrics.version}"
+  ivy-log4j-version: "${ivyversions.org.apache.logging.log4j.version}"
+  ivy-opennlp-version: "${ivyversions./org.apache.opennlp/opennlp-tools}"
+  ivy-tika-version: "${ivyversions.org.apache.tika.version}"
+  ivy-velocity-tools-version: "${ivyversions./org.apache.velocity/velocity-tools}"
+  ivy-zookeeper-version: "${ivyversions./org.apache.zookeeper/zookeeper}"
+  
 asciidoctor:
+  safe: 0
   attributes:
     <<: *solr-attributes-ref
+    attribute-missing: "warn"
     icons: "font"
     source-highlighter: "pygments"
     pygments-css: "style"

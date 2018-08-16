@@ -18,7 +18,6 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import org.apache.lucene.index.LeafReaderContext;
@@ -68,12 +67,14 @@ public abstract class CachingCollector extends FilterCollector {
     public final float score() { return score; }
 
     @Override
-    public int docID() {
-      return doc;
+    public float getMaxScore(int upTo) throws IOException {
+      return Float.POSITIVE_INFINITY;
     }
 
     @Override
-    public final int freq() { throw new UnsupportedOperationException(); }
+    public int docID() {
+      return doc;
+    }
 
   }
 
@@ -178,8 +179,8 @@ public abstract class CachingCollector extends FilterCollector {
 
     /** Ensure the scores are collected so they can be replayed, even if the wrapped collector doesn't need them. */
     @Override
-    public boolean needsScores() {
-      return true;
+    public ScoreMode scoreMode() {
+      return ScoreMode.COMPLETE;
     }
 
     @Override
@@ -211,7 +212,7 @@ public abstract class CachingCollector extends FilterCollector {
     }
 
     protected void grow(int newLen) {
-      docs = Arrays.copyOf(docs, newLen);
+      docs = ArrayUtil.growExact(docs, newLen);
     }
 
     protected void invalidate() {
@@ -248,7 +249,7 @@ public abstract class CachingCollector extends FilterCollector {
     }
 
     int[] cachedDocs() {
-      return docs == null ? null : Arrays.copyOf(docs, docCount);
+      return docs == null ? null : ArrayUtil.copyOfSubArray(docs, 0, docCount);
     }
 
   }
@@ -272,7 +273,7 @@ public abstract class CachingCollector extends FilterCollector {
     @Override
     protected void grow(int newLen) {
       super.grow(newLen);
-      scores = Arrays.copyOf(scores, newLen);
+      scores = ArrayUtil.growExact(scores, newLen);
     }
 
     @Override
@@ -288,7 +289,7 @@ public abstract class CachingCollector extends FilterCollector {
     }
 
     float[] cachedScores() {
-      return docs == null ? null : Arrays.copyOf(scores, docCount);
+      return docs == null ? null : ArrayUtil.copyOfSubArray(scores, 0, docCount);
     }
   }
 
@@ -304,8 +305,8 @@ public abstract class CachingCollector extends FilterCollector {
       public void collect(int doc) {}
 
       @Override
-      public boolean needsScores() {
-        return true;
+      public ScoreMode scoreMode() {
+        return ScoreMode.COMPLETE;
       }
 
     };

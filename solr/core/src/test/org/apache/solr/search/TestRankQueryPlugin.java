@@ -39,11 +39,13 @@ import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.LeafFieldComparator;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopDocsCollector;
+import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.InPlaceMergeSorter;
 import org.apache.lucene.util.PriorityQueue;
@@ -109,8 +111,8 @@ public class TestRankQueryPlugin extends QParserPlugin {
       return false;
     }
 
-    public Weight createWeight(IndexSearcher indexSearcher, boolean needsScores, float boost) throws IOException{
-      return q.createWeight(indexSearcher, needsScores, boost);
+    public Weight createWeight(IndexSearcher indexSearcher, ScoreMode scoreMode, float boost) throws IOException{
+      return q.createWeight(indexSearcher, scoreMode, boost);
     }
 
     @Override
@@ -457,8 +459,8 @@ public class TestRankQueryPlugin extends QParserPlugin {
       }
 
       @Override
-      public int freq() throws IOException {
-        throw new UnsupportedOperationException();
+      public float getMaxScore(int upTo) throws IOException {
+        return score;
       }
 
       @Override
@@ -692,12 +694,8 @@ public class TestRankQueryPlugin extends QParserPlugin {
         public void setScorer(Scorer scorer) throws IOException {}
         
         public void collect(int doc) throws IOException {
-          int valuesDocID = values.docID();
-          if (valuesDocID < doc) {
-            valuesDocID = values.advance(doc);
-          }
           long value;
-          if (valuesDocID == doc) {
+          if (values.advanceExact(doc)) {
             value = values.longValue();
           } else {
             value = 0;
@@ -726,7 +724,7 @@ public class TestRankQueryPlugin extends QParserPlugin {
         }
       });
       ScoreDoc[] scoreDocs = list.toArray(new ScoreDoc[list.size()]);
-      return new TopDocs(list.size(), scoreDocs, 0.0f);
+      return new TopDocs(new TotalHits(list.size(), TotalHits.Relation.EQUAL_TO), scoreDocs);
     }
 
     public TopDocs topDocs(int start, int len) {
@@ -738,8 +736,8 @@ public class TestRankQueryPlugin extends QParserPlugin {
     }
     
     @Override
-    public boolean needsScores() {
-      return true;
+    public ScoreMode scoreMode() {
+      return ScoreMode.COMPLETE;
     }
   }
 
@@ -788,7 +786,7 @@ public class TestRankQueryPlugin extends QParserPlugin {
         }
       });
       ScoreDoc[] scoreDocs = list.toArray(new ScoreDoc[list.size()]);
-      return new TopDocs(list.size(), scoreDocs, 0.0f);
+      return new TopDocs(new TotalHits(list.size(), TotalHits.Relation.EQUAL_TO), scoreDocs);
     }
 
     public TopDocs topDocs(int start, int len) {
@@ -800,8 +798,8 @@ public class TestRankQueryPlugin extends QParserPlugin {
     }
     
     @Override
-    public boolean needsScores() {
-      return true;
+    public ScoreMode scoreMode() {
+      return ScoreMode.COMPLETE;
     }
   }
 

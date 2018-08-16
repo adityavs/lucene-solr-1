@@ -53,14 +53,17 @@ public final class FieldInfo {
   private int pointDimensionCount;
   private int pointNumBytes;
 
+  // whether this field is used as the soft-deletes field
+  private final boolean softDeletesField;
+
   /**
    * Sole constructor.
    *
    * @lucene.experimental
    */
-  public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, 
-                   boolean storePayloads, IndexOptions indexOptions, DocValuesType docValues,
-                   long dvGen, Map<String,String> attributes, int pointDimensionCount, int pointNumBytes) {
+  public FieldInfo(String name, int number, boolean storeTermVector, boolean omitNorms, boolean storePayloads,
+                   IndexOptions indexOptions, DocValuesType docValues, long dvGen, Map<String,String> attributes,
+                   int pointDimensionCount, int pointNumBytes, boolean softDeletesField) {
     this.name = Objects.requireNonNull(name);
     this.number = number;
     this.docValuesType = Objects.requireNonNull(docValues, "DocValuesType must not be null (field: \"" + name + "\")");
@@ -78,6 +81,7 @@ public final class FieldInfo {
     this.attributes = Objects.requireNonNull(attributes);
     this.pointDimensionCount = pointDimensionCount;
     this.pointNumBytes = pointNumBytes;
+    this.softDeletesField = softDeletesField;
     assert checkConsistency();
   }
 
@@ -137,8 +141,7 @@ public final class FieldInfo {
       if (this.indexOptions == IndexOptions.NONE) {
         this.indexOptions = indexOptions;
       } else if (indexOptions != IndexOptions.NONE) {
-        // downgrade
-        this.indexOptions = this.indexOptions.compareTo(indexOptions) < 0 ? this.indexOptions : indexOptions;
+        throw new IllegalArgumentException("cannot change field \"" + name + "\" from index options=" + this.indexOptions + " to inconsistent index options=" + indexOptions);
       }
     }
 
@@ -226,8 +229,7 @@ public final class FieldInfo {
       if (indexOptions == IndexOptions.NONE) {
         indexOptions = newIndexOptions;
       } else if (newIndexOptions != IndexOptions.NONE) {
-        // downgrade
-        indexOptions = indexOptions.compareTo(newIndexOptions) < 0 ? indexOptions : newIndexOptions;
+        throw new IllegalArgumentException("cannot change field \"" + name + "\" from index options=" + indexOptions + " to inconsistent index options=" + newIndexOptions);
       }
     }
 
@@ -333,5 +335,13 @@ public final class FieldInfo {
    */
   public Map<String,String> attributes() {
     return attributes;
+  }
+
+  /**
+   * Returns true if this field is configured and used as the soft-deletes field.
+   * See {@link IndexWriterConfig#softDeletesField}
+   */
+  public boolean isSoftDeletesField() {
+    return softDeletesField;
   }
 }

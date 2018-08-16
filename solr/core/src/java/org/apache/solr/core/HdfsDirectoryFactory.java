@@ -16,8 +16,7 @@
  */
 package org.apache.solr.core;
 
-import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
-
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.net.URLEncoder;
@@ -30,6 +29,10 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalListener;
+import com.google.common.cache.RemovalNotification;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.FileStatus;
@@ -66,10 +69,7 @@ import org.apache.solr.util.plugin.SolrCoreAware;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.RemovalListener;
-import com.google.common.cache.RemovalNotification;
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
 
 public class HdfsDirectoryFactory extends CachingDirectoryFactory implements SolrCoreAware, SolrMetricProducer {
   private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -113,7 +113,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   
   public static Metrics metrics;
   private static Boolean kerberosInit;
-  
+
   // we use this cache for FileSystem instances when we don't have access to a long lived instance
   private com.google.common.cache.Cache<String,FileSystem> tmpFsCache = CacheBuilder.newBuilder()
       .concurrencyLevel(10)
@@ -150,7 +150,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   @Override
   public void init(NamedList args) {
     super.init(args);
-    params = SolrParams.toSolrParams(args);
+    params = args.toSolrParams();
     this.hdfsDataDir = getConfig(HDFS_HOME, null);
     if (this.hdfsDataDir != null && this.hdfsDataDir.length() == 0) {
       this.hdfsDataDir = null;
@@ -188,6 +188,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   }
 
   @Override
+  @SuppressWarnings("resource")
   protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
     assert params != null : "init must be called before create";
     LOG.info("creating directory factory for path {}", path);
@@ -202,6 +203,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
     boolean blockCacheReadEnabled = getConfig(BLOCKCACHE_READ_ENABLED, true);
     
     final HdfsDirectory hdfsDir;
+
     final Directory dir;
     if (blockCacheEnabled && dirContext != DirContext.META_DATA) {
       int numberOfBlocksPerBank = getConfig(NUMBEROFBLOCKSPERBANK, 16384);
@@ -321,14 +323,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   @Override
   public boolean exists(String path) {
     final Path hdfsDirPath = new Path(path);
-    final Configuration conf = getConf();
-    FileSystem fileSystem = null;
-    try {
-      // no need to close the fs, the cache will do it
-      fileSystem = tmpFsCache.get(path, () -> FileSystem.get(hdfsDirPath.toUri(), conf));
-    } catch (ExecutionException e) {
-      throw new RuntimeException(e);
-    }
+    FileSystem fileSystem = getCachedFileSystem(path);
 
     try {
       return fileSystem.exists(hdfsDirPath);
@@ -348,16 +343,8 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   
   protected synchronized void removeDirectory(final CacheValue cacheValue)
       throws IOException {
-    final Configuration conf = getConf();
-    FileSystem fileSystem = null;
-    
-    try {
-      // no need to close the fs, the cache will do it
-      fileSystem = tmpFsCache.get(cacheValue.path, () -> FileSystem.get(new Path(cacheValue.path).toUri(), conf));
-    } catch (ExecutionException e) {
-      throw new RuntimeException(e);
-    }
-    
+    FileSystem fileSystem = getCachedFileSystem(cacheValue.path);
+
     try {
       boolean success = fileSystem.delete(new Path(cacheValue.path), true);
       if (!success) {
@@ -437,11 +424,9 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   @Override
   public long size(String path) throws IOException {
     Path hdfsDirPath = new Path(path);
-    FileSystem fileSystem = null;
+    FileSystem fileSystem = getCachedFileSystem(path);
     try {
-      fileSystem = FileSystem.newInstance(hdfsDirPath.toUri(), getConf());
-      long size = fileSystem.getContentSummary(hdfsDirPath).getLength();
-      return size;
+      return fileSystem.getContentSummary(hdfsDirPath).getLength();
     } catch (IOException e) {
       LOG.error("Error checking if hdfs path exists", e);
       throw new SolrException(ErrorCode.SERVER_ERROR, "Error checking if hdfs path exists", e);
@@ -449,7 +434,16 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
       IOUtils.closeQuietly(fileSystem);
     }
   }
-  
+
+  private FileSystem getCachedFileSystem(String path) {
+    try {
+      // no need to close the fs, the cache will do it
+      return tmpFsCache.get(path, () -> FileSystem.get(new Path(path).toUri(), getConf()));
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   public String getConfDir() {
     return confDir;
   }
@@ -467,7 +461,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
     }
     synchronized (HdfsDirectoryFactory.class) {
       if (kerberosInit == null) {
-        kerberosInit = new Boolean(true);
+        kerberosInit = Boolean.TRUE;
         final Configuration conf = getConf();
         final String authVal = conf.get(HADOOP_SECURITY_AUTHENTICATION);
         final String kerberos = "kerberos";
@@ -494,9 +488,9 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
   }
 
   @Override
-  public void initializeMetrics(SolrMetricManager manager, String registry, String scope) {
-    MetricsHolder.metrics.initializeMetrics(manager, registry, scope);
-    LocalityHolder.reporter.initializeMetrics(manager, registry, scope);
+  public void initializeMetrics(SolrMetricManager manager, String registry, String tag, String scope) {
+    MetricsHolder.metrics.initializeMetrics(manager, registry, tag, scope);
+    LocalityHolder.reporter.initializeMetrics(manager, registry, tag, scope);
   }
 
   @Override
@@ -514,13 +508,7 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
 
     // Get the FileSystem object
     final Path dataDirPath = new Path(dataDir);
-    final Configuration conf = getConf();
-    FileSystem fileSystem = null;
-    try {
-      fileSystem = tmpFsCache.get(dataDir, () -> FileSystem.get(dataDirPath.toUri(), conf));
-    } catch (ExecutionException e) {
-      throw new RuntimeException(e);
-    }
+    FileSystem fileSystem = getCachedFileSystem(dataDir);
 
     boolean pathExists = false;
     try {
@@ -551,17 +539,20 @@ public class HdfsDirectoryFactory extends CachingDirectoryFactory implements Sol
           return accept;
         }
       });
+    } catch (FileNotFoundException fnfe) {
+      // already deleted - ignore
+      LOG.debug("Old index directory already deleted - skipping...", fnfe);
     } catch (IOException ioExc) {
       LOG.error("Error checking for old index directories to clean-up.", ioExc);
-    }
-    
-    List<Path> oldIndexPaths = new ArrayList<>(oldIndexDirs.length);
-    for (FileStatus ofs : oldIndexDirs) {
-      oldIndexPaths.add(ofs.getPath());
     }
 
     if (oldIndexDirs == null || oldIndexDirs.length == 0)
       return; // nothing to clean-up
+
+    List<Path> oldIndexPaths = new ArrayList<>(oldIndexDirs.length);
+    for (FileStatus ofs : oldIndexDirs) {
+      oldIndexPaths.add(ofs.getPath());
+    }
 
     Collections.sort(oldIndexPaths, Collections.reverseOrder());
     

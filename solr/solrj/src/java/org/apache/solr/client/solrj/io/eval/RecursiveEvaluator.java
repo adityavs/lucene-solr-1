@@ -22,6 +22,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -55,6 +57,8 @@ public abstract class RecursiveEvaluator implements StreamEvaluator, ValueWorker
   protected Object normalizeInputType(Object value){
     if(null == value){
       return null;
+    } else if (value instanceof VectorFunction) {
+      return value;
     }
     else if(value instanceof Double){
       if(Double.isNaN((Double)value)){
@@ -97,8 +101,9 @@ public abstract class RecursiveEvaluator implements StreamEvaluator, ValueWorker
   protected Object normalizeOutputType(Object value) {
     if(null == value){
       return null;
-    }
-    else if(value instanceof BigDecimal){
+    } else if (value instanceof VectorFunction) {
+      return value;
+    } else if(value instanceof BigDecimal){
       BigDecimal bd = (BigDecimal)value;
       if(bd.signum() == 0 || bd.scale() <= 0 || bd.stripTrailingZeros().scale() <= 0){
         try{
@@ -125,6 +130,17 @@ public abstract class RecursiveEvaluator implements StreamEvaluator, ValueWorker
     else if(value instanceof List){
       // normalize each value in the list
       return ((List<?>)value).stream().map(innerValue -> normalizeOutputType(innerValue)).collect(Collectors.toList());
+    } else if(value instanceof Tuple && value.getClass().getEnclosingClass() == null) {
+      //If its a tuple and not a inner class that has extended tuple, which is done in a number of cases so that mathematical models
+      //can be contained within a tuple.
+
+      Tuple tuple = (Tuple)value;
+      Map map = new HashMap();
+      for(Object o : tuple.fields.keySet()) {
+        Object v = tuple.fields.get(o);
+        map.put(o, normalizeOutputType(v));
+      }
+      return new Tuple(map);
     }
     else{
       // anything else can just be returned as is
@@ -171,7 +187,7 @@ public abstract class RecursiveEvaluator implements StreamEvaluator, ValueWorker
     
     Set<String> namedParameters = factory.getNamedOperands(expression).stream().map(param -> param.getName()).collect(Collectors.toSet());
     long ignorableCount = ignoredNamedParameters.stream().filter(name -> namedParameters.contains(name)).count();
-    
+    /*
     if(0 != expression.getParameters().size() - containedEvaluators.size() - ignorableCount){
       if(namedParameters.isEmpty()){
         throw new IOException(String.format(Locale.ROOT,"Invalid expression %s - unknown operands found - expecting only StreamEvaluators or field names", expression));
@@ -180,6 +196,7 @@ public abstract class RecursiveEvaluator implements StreamEvaluator, ValueWorker
         throw new IOException(String.format(Locale.ROOT,"Invalid expression %s - unknown operands found - expecting only StreamEvaluators, field names, or named parameters [%s]", expression, namedParameters.stream().collect(Collectors.joining(","))));
       }
     }
+    */
   }
   
   @Override

@@ -30,6 +30,7 @@ import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.LeafCollector;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BitDocIdSet;
@@ -112,7 +113,8 @@ public class HashQParserPlugin extends QParserPlugin {
       this.worker = worker;
     }
 
-    public Weight createWeight(IndexSearcher searcher, boolean needsScores, float boost) throws IOException {
+    @Override
+    public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
 
       String[] keys = keysParam.split(",");
       SolrIndexSearcher solrIndexSearcher = (SolrIndexSearcher)searcher;
@@ -132,7 +134,7 @@ public class HashQParserPlugin extends QParserPlugin {
       }
 
       ConstantScoreQuery constantScoreQuery = new ConstantScoreQuery(new BitsFilter(fixedBitSets));
-      return searcher.rewrite(constantScoreQuery).createWeight(searcher, false, boost);
+      return searcher.rewrite(constantScoreQuery).createWeight(searcher, ScoreMode.COMPLETE_NO_SCORES, boost);
     }
 
     public static class BitsFilter extends Filter {
@@ -295,7 +297,7 @@ public class HashQParserPlugin extends QParserPlugin {
       if (doc == values.docID()) {
         ref = values.binaryValue();
       } else {
-        ref = null;
+        ref = new BytesRef(); // EMPTY_BYTES . worker=0 will always process empty values
       }
       this.fieldType.indexedToReadable(ref, charsRefBuilder);
       CharsRef charsRef = charsRefBuilder.get();
@@ -325,7 +327,7 @@ public class HashQParserPlugin extends QParserPlugin {
       if (valuesDocID == doc) {
         l = values.longValue();
       } else {
-        l = 0;
+        l = 0; //worker=0 will always process empty values
       }
       return Longs.hashCode(l);
     }

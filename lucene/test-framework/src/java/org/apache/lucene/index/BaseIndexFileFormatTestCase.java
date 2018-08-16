@@ -323,7 +323,7 @@ abstract class BaseIndexFileFormatTestCase extends LuceneTestCase {
     FieldInfo proto = oneDocReader.getFieldInfos().fieldInfo("field");
     FieldInfo field = new FieldInfo(proto.name, proto.number, proto.hasVectors(), proto.omitsNorms(), proto.hasPayloads(), 
                                     proto.getIndexOptions(), proto.getDocValuesType(), proto.getDocValuesGen(), new HashMap<>(),
-                                    proto.getPointDimensionCount(), proto.getPointNumBytes());
+                                    proto.getPointDimensionCount(), proto.getPointNumBytes(), proto.isSoftDeletesField());
 
     FieldInfos fieldInfos = new FieldInfos(new FieldInfo[] { field } );
 
@@ -334,8 +334,30 @@ abstract class BaseIndexFileFormatTestCase extends LuceneTestCase {
     SegmentReadState readState = new SegmentReadState(dir, segmentInfo, fieldInfos, IOContext.READ);
 
     // PostingsFormat
+    NormsProducer fakeNorms = new NormsProducer() {
+
+      @Override
+      public void close() throws IOException {}
+
+      @Override
+      public long ramBytesUsed() {
+        return 0;
+      }
+
+      @Override
+      public NumericDocValues getNorms(FieldInfo field) throws IOException {
+        if (field.hasNorms() == false) {
+          return null;
+        }
+        return oneDocReader.getNormValues(field.name);
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {}
+      
+    };
     try (FieldsConsumer consumer = codec.postingsFormat().fieldsConsumer(writeState)) {
-      consumer.write(MultiFields.getFields(oneDocReader));
+      consumer.write(MultiFields.getFields(oneDocReader), fakeNorms);
       IOUtils.close(consumer);
       IOUtils.close(consumer);
     }

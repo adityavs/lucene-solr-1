@@ -112,8 +112,7 @@ public abstract class ReadTask extends PerfTask {
             // Weight public again, we can go back to
             // pulling the Weight ourselves:
             TopFieldCollector collector = TopFieldCollector.create(sort, numHits,
-                                                                   true, withScore(),
-                                                                   withMaxScore());
+                                                                   withTotalHits() ? Integer.MAX_VALUE : 1);
             searcher.search(q, collector);
             hits = collector.topDocs();
           } else {
@@ -175,7 +174,7 @@ public abstract class ReadTask extends PerfTask {
   }
 
   protected Collector createCollector() throws Exception {
-    return TopScoreDocCollector.create(numHits());
+    return TopScoreDocCollector.create(numHits(), withTotalHits() ? Integer.MAX_VALUE : 1);
   }
 
 
@@ -208,16 +207,10 @@ public abstract class ReadTask extends PerfTask {
    */
   public abstract boolean withTraverse();
 
-  /** Whether scores should be computed (only useful with
+  /** Whether totalHits should be computed (only useful with
    *  field sort) */
-  public boolean withScore() {
-    return true;
-  }
-
-  /** Whether maxScores should be computed (only useful with
-   *  field sort) */
-  public boolean withMaxScore() {
-    return true;
+  public boolean withTotalHits() {
+    return false;
   }
 
   /**

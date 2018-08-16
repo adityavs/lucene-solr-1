@@ -37,8 +37,8 @@ import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.PrefixCodedTerms;
 import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.index.TermContext;
 import org.apache.lucene.index.TermState;
+import org.apache.lucene.index.TermStates;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.BulkScorer;
@@ -48,13 +48,14 @@ import org.apache.lucene.search.ConstantScoreWeight;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BitDocIdSet;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.BytesRefIterator;
@@ -249,17 +250,17 @@ public class GraphTermsQParserPlugin extends QParserPlugin {
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher, boolean needsScores, float boost) throws IOException {
+    public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
 
-      List<TermContext> finalContexts = new ArrayList();
+      List<TermStates> finalContexts = new ArrayList();
       List<Term> finalTerms = new ArrayList();
       List<LeafReaderContext> contexts = searcher.getTopReaderContext().leaves();
-      TermContext[] termContexts = new TermContext[this.queryTerms.length];
-      collectTermContext(searcher.getIndexReader(), contexts, termContexts, this.queryTerms);
-      for(int i=0; i<termContexts.length; i++) {
-        TermContext termContext = termContexts[i];
-        if(termContext != null && termContext.docFreq() <= this.maxDocFreq) {
-          finalContexts.add(termContext);
+      TermStates[] termStates = new TermStates[this.queryTerms.length];
+      collectTermStates(searcher.getIndexReader(), contexts, termStates, this.queryTerms);
+      for(int i=0; i<termStates.length; i++) {
+        TermStates ts = termStates[i];
+        if(ts != null && ts.docFreq() <= this.maxDocFreq) {
+          finalContexts.add(ts);
           finalTerms.add(queryTerms[i]);
         }
       }
@@ -284,11 +285,11 @@ public class GraphTermsQParserPlugin extends QParserPlugin {
           PostingsEnum docs = null;
           DocIdSetBuilder builder = new DocIdSetBuilder(reader.maxDoc(), terms);
           for (int i=0; i<finalContexts.size(); i++) {
-            TermContext termContext = finalContexts.get(i);
-            TermState termState = termContext.get(context.ord);
+            TermStates ts = finalContexts.get(i);
+            TermState termState = ts.get(context);
             if(termState != null) {
               Term term = finalTerms.get(i);
-              termsEnum.seekExact(term.bytes(), termContext.get(context.ord));
+              termsEnum.seekExact(term.bytes(), ts.get(context));
               docs = termsEnum.postings(docs, PostingsEnum.NONE);
               builder.add(docs);
             }
@@ -330,13 +331,19 @@ public class GraphTermsQParserPlugin extends QParserPlugin {
             return scorer(weightOrBitSet.set);
           }
         }
+
+        @Override
+        public boolean isCacheable(LeafReaderContext ctx) {
+          return true;
+        }
+
       };
     }
 
-    private void collectTermContext(IndexReader reader,
-                                    List<LeafReaderContext> leaves,
-                                    TermContext[] contextArray,
-                                    Term[] queryTerms) throws IOException {
+    private void collectTermStates(IndexReader reader,
+                                   List<LeafReaderContext> leaves,
+                                   TermStates[] contextArray,
+                                   Term[] queryTerms) throws IOException {
       TermsEnum termsEnum = null;
       for (LeafReaderContext context : leaves) {
 
@@ -352,15 +359,15 @@ public class GraphTermsQParserPlugin extends QParserPlugin {
 
         for (int i = 0; i < queryTerms.length; i++) {
           Term term = queryTerms[i];
-          TermContext termContext = contextArray[i];
+          TermStates termStates = contextArray[i];
 
           if (termsEnum.seekExact(term.bytes())) {
-            if (termContext == null) {
-              contextArray[i] = new TermContext(reader.getContext(),
+            if (termStates == null) {
+              contextArray[i] = new TermStates(reader.getContext(),
                   termsEnum.termState(), context.ord, termsEnum.docFreq(),
                   termsEnum.totalTermFreq());
             } else {
-              termContext.register(termsEnum.termState(), context.ord,
+              termStates.register(termsEnum.termState(), context.ord,
                   termsEnum.docFreq(), termsEnum.totalTermFreq());
             }
           }
@@ -541,22 +548,17 @@ abstract class PointSetQuery extends Query implements DocSetProducer {
   }
 
   private FixedBitSet getLiveDocs(IndexSearcher searcher) throws IOException {
+    if (!searcher.getIndexReader().hasDeletions()) {
+      return null;
+    }
     if (searcher instanceof SolrIndexSearcher) {
-      BitDocSet liveDocs = ((SolrIndexSearcher) searcher).getLiveDocs();
-      FixedBitSet liveBits = liveDocs.size() == ((SolrIndexSearcher) searcher).maxDoc() ? null : liveDocs.getBits();
-      return liveBits;
+      return ((SolrIndexSearcher) searcher).getLiveDocSet().getBits();
     } else {
-      if (searcher.getTopReaderContext().reader().maxDoc() == searcher.getTopReaderContext().reader().numDocs()) return null;
-      FixedBitSet bs = new FixedBitSet(searcher.getTopReaderContext().reader().maxDoc());
-      for (LeafReaderContext ctx : searcher.getTopReaderContext().leaves()) {
-        Bits liveDocs = ctx.reader().getLiveDocs();
-        int max = ctx.reader().maxDoc();
-        int base = ctx.docBase;
-        for (int i=0; i<max; i++) {
-          if (liveDocs.get(i)) bs.set(i + base);
-        }
-      }
-      return bs;
+      // TODO Does this ever happen?  In Solr should always be SolrIndexSearcher?
+      //smallSetSize==0 thus will always produce a BitDocSet (FixedBitSet)
+      DocSetCollector docSetCollector = new DocSetCollector(0, searcher.getIndexReader().maxDoc());
+      searcher.search(new MatchAllDocsQuery(), docSetCollector);
+      return ((BitDocSet) docSetCollector.getDocSet()).getBits();
     }
   }
 
@@ -602,7 +604,7 @@ abstract class PointSetQuery extends Query implements DocSetProducer {
 
 
   @Override
-  public final Weight createWeight(IndexSearcher searcher, boolean needsScores, float boost) throws IOException {
+  public final Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
     return new ConstantScoreWeight(this, boost) {
       Filter filter;
 
@@ -623,6 +625,11 @@ abstract class PointSetQuery extends Query implements DocSetProducer {
           return null;
         }
         return new ConstantScoreScorer(this, score(), readerSetIterator);
+      }
+
+      @Override
+      public boolean isCacheable(LeafReaderContext ctx) {
+        return true;
       }
     };
   }

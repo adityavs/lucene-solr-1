@@ -131,8 +131,7 @@ public abstract class TermsEnum implements BytesRefIterator {
 
   /** Returns the total number of occurrences of this term
    *  across all documents (the sum of the freq() for each
-   *  doc that has this term).  This will be -1 if the
-   *  codec doesn't support this measure.  Note that, like
+   *  doc that has this term). Note that, like
    *  other term measures, this measure does not take
    *  deleted documents into account. */
   public abstract long totalTermFreq() throws IOException;
@@ -159,8 +158,7 @@ public abstract class TermsEnum implements BytesRefIterator {
   /** Get {@link PostingsEnum} for the current term, with
    *  control over whether freqs, positions, offsets or payloads
    *  are required.  Do not call this when the enum is
-   *  unpositioned.  This method may return null if the postings
-   *  information required is not available from the index
+   *  unpositioned.  This method will not return null.
    *  <p>
    *  <b>NOTE</b>: the returned iterator may return deleted documents, so
    *  deleted documents have to be checked on top of the {@link PostingsEnum}.
@@ -171,6 +169,12 @@ public abstract class TermsEnum implements BytesRefIterator {
    */
   public abstract PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException;
 
+  /**
+   * Return a {@link ImpactsEnum}.
+   * @see #postings(PostingsEnum, int)
+   */
+  public abstract ImpactsEnum impacts(int flags) throws IOException;
+  
   /**
    * Expert: Returns the TermsEnums internal state to position the TermsEnum
    * without re-seeking the term dictionary.
@@ -229,7 +233,12 @@ public abstract class TermsEnum implements BytesRefIterator {
     public PostingsEnum postings(PostingsEnum reuse, int flags) {
       throw new IllegalStateException("this method should never be called");
     }
-      
+
+    @Override
+    public ImpactsEnum impacts(int flags) throws IOException {
+      throw new IllegalStateException("this method should never be called");
+    }
+
     @Override
     public BytesRef next() {
       return null;

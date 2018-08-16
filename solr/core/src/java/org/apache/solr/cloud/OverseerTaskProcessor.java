@@ -91,7 +91,7 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
 
   private boolean isClosed;
 
-  private Overseer.Stats stats;
+  private Stats stats;
 
   // Set of tasks that have been picked up for processing but not cleaned up from zk work-queue.
   // It may contain tasks that have completed execution, have been entered into the completed/failed map in zk but not
@@ -122,7 +122,7 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
   private OverseerNodePrioritizer prioritizer;
 
   public OverseerTaskProcessor(ZkStateReader zkStateReader, String myId,
-                                        Overseer.Stats stats,
+                                        Stats stats,
                                         OverseerMessageHandlerSelector selector,
                                         OverseerNodePrioritizer prioritizer,
                                         OverseerTaskQueue workQueue,
@@ -257,7 +257,6 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
             }
             if (runningZKTasks.contains(head.getId())) continue;
             final ZkNodeProps message = ZkNodeProps.load(head.getBytes());
-            OverseerMessageHandler messageHandler = selector.selectOverseerMessageHandler(message);
             final String asyncId = message.getStr(ASYNC);
             if (hasLeftOverItems) {
               if (head.getId().equals(oldestItemInWorkQueue))
@@ -269,6 +268,12 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
               }
             }
             String operation = message.getStr(Overseer.QUEUE_OPERATION);
+            if (operation == null) {
+              log.error("Msg does not have required " + Overseer.QUEUE_OPERATION + ": {}", message);
+              workQueue.remove(head);
+              continue;
+            }
+            OverseerMessageHandler messageHandler = selector.selectOverseerMessageHandler(message);
             OverseerMessageHandler.Lock lock = messageHandler.lockTask(message, taskBatch);
             if (lock == null) {
               log.debug("Exclusivity check failed for [{}]", message.toString());
@@ -383,10 +388,12 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
     String statsName = "collection_am_i_leader";
     Timer.Context timerContext = stats.time(statsName);
     boolean success = true;
+    String propsId = null;
     try {
       ZkNodeProps props = ZkNodeProps.load(zkStateReader.getZkClient().getData(
           Overseer.OVERSEER_ELECT + "/leader", null, null, true));
-      if (myId.equals(props.getStr(ID))) {
+      propsId = props.getStr(ID);
+      if (myId.equals(propsId)) {
         return LeaderStatus.YES;
       }
     } catch (KeeperException e) {
@@ -396,6 +403,8 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
         return LeaderStatus.DONT_KNOW;
       } else if (e.code() != KeeperException.Code.SESSIONEXPIRED) {
         log.warn("", e);
+      } else {
+        log.debug("", e);
       }
     } catch (InterruptedException e) {
       success = false;
@@ -408,7 +417,7 @@ public class OverseerTaskProcessor implements Runnable, Closeable {
         stats.error(statsName);
       }
     }
-    log.info("According to ZK I (id=" + myId + ") am no longer a leader.");
+    log.info("According to ZK I (id={}) am no longer a leader. propsId={}", myId, propsId);
     return LeaderStatus.NO;
   }
 
