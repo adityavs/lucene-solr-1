@@ -283,7 +283,7 @@ public class SolrCloudTestCase extends SolrTestCaseJ4 {
 
   /**
    * Return a {@link CollectionStatePredicate} that returns true if a collection has the expected
-   * number of active shards and active replicas
+   * number of shards and active replicas
    */
   public static CollectionStatePredicate clusterShape(int expectedShards, int expectedReplicas) {
     return (liveNodes, collectionState) -> {
@@ -291,17 +291,37 @@ public class SolrCloudTestCase extends SolrTestCaseJ4 {
         return false;
       if (collectionState.getSlices().size() != expectedShards)
         return false;
-      for (Slice slice : collectionState) {
-        int activeReplicas = 0;
-        for (Replica replica : slice) {
-          if (replica.isActive(liveNodes))
-            activeReplicas++;
-        }
-        if (activeReplicas != expectedReplicas)
-          return false;
-      }
+      if (compareActiveReplicaCountsForShards(expectedReplicas, liveNodes, collectionState)) return false;
       return true;
     };
+  }
+
+  /**
+   * Return a {@link CollectionStatePredicate} that returns true if a collection has the expected
+   * number of active shards and active replicas
+   */
+  public static CollectionStatePredicate activeClusterShape(int expectedShards, int expectedReplicas) {
+    return (liveNodes, collectionState) -> {
+      if (collectionState == null)
+        return false;
+      if (collectionState.getActiveSlices().size() != expectedShards)
+        return false;
+      if (compareActiveReplicaCountsForShards(expectedReplicas, liveNodes, collectionState)) return false;
+      return true;
+    };
+  }
+
+  private static boolean compareActiveReplicaCountsForShards(int expectedReplicas, Set<String> liveNodes, DocCollection collectionState) {
+    for (Slice slice : collectionState) {
+      int activeReplicas = 0;
+      for (Replica replica : slice) {
+        if (replica.isActive(liveNodes))
+          activeReplicas++;
+      }
+      if (activeReplicas != expectedReplicas)
+        return true;
+    }
+    return false;
   }
 
   /**
@@ -369,6 +389,35 @@ public class SolrCloudTestCase extends SolrTestCaseJ4 {
     }
     fail("Tried " + i + " times , could not succeed. " + messageOnFail);
     return null;
+  }
+
+  /**
+   * Ensure that the given number of solr instances are running. If less instances are found then new instances are
+   * started. If extra instances are found then they are stopped.
+   * @param nodeCount the number of Solr instances that should be running at the end of this method
+   * @throws Exception on error
+   */
+  public static void ensureRunningJettys(int nodeCount, int timeoutSeconds) throws Exception {
+    // ensure that exactly nodeCount jetty nodes are running
+    List<JettySolrRunner> jettys = cluster.getJettySolrRunners();
+    List<JettySolrRunner> copyOfJettys = new ArrayList<>(jettys);
+    int numJetties = copyOfJettys.size();
+    for (int i = nodeCount; i < numJetties; i++)  {
+      cluster.stopJettySolrRunner(copyOfJettys.get(i));
+    }
+    for (int i = copyOfJettys.size(); i < nodeCount; i++) {
+      // start jetty instances
+      cluster.startJettySolrRunner();
+    }
+    // refresh the count from the source
+    jettys = cluster.getJettySolrRunners();
+    numJetties = jettys.size();
+    for (int i = 0; i < numJetties; i++) {
+      if (!jettys.get(i).isRunning()) {
+        cluster.startJettySolrRunner(jettys.get(i));
+      }
+    }
+    cluster.waitForAllNodes(timeoutSeconds);
   }
 
 }

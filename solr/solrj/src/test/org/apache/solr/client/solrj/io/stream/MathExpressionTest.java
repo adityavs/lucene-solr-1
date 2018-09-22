@@ -310,6 +310,52 @@ public class MathExpressionTest extends SolrCloudTestCase {
     assertEquals(array.get(2).intValue(), 50);
     assertEquals(array.get(3).intValue(), 50);
   }
+
+  @Test
+  public void testLatlonFunctions() throws Exception {
+    UpdateRequest updateRequest = new UpdateRequest();
+
+    int i=0;
+    while(i<5) {
+      updateRequest.add(id, "id_"+(++i),"test_dt", getDateString("2016", "5", "1"),
+          "price_i",  Integer.toString(i), "loc_p", (42.906797030808235+i)+","+(76.69455762489834+i));
+    }
+
+
+    updateRequest.commit(cluster.getSolrClient(), COLLECTIONORALIAS);
+
+    String expr = "let(echo=true," +
+        "              a=search("+COLLECTIONORALIAS+", q=*:*, fl=\"id, loc_p, price_i\",rows=100, sort=\"price_i asc\"),"+
+        "              b=latlonVectors(a, field=loc_p)," +
+        "              c=distance(array(40.7128, 74.0060), array(45.7128, 74.0060), haversineMeters()))";
+
+
+    ModifiableSolrParams paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", expr);
+    paramsLoc.set("qt", "/stream");
+
+    String url = cluster.getJettySolrRunners().get(0).getBaseUrl().toString()+"/"+COLLECTIONORALIAS;
+    TupleStream solrStream = new SolrStream(url, paramsLoc);
+
+    StreamContext context = new StreamContext();
+    solrStream.setStreamContext(context);
+    List<Tuple> tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    List<List<Number>>locVectors = (List<List<Number>>)tuples.get(0).get("b");
+    System.out.println(locVectors);
+    int v=1;
+    for(List<Number> row : locVectors) {
+     double lat = row.get(0).doubleValue();
+     double lon = row.get(1).doubleValue();
+     assertEquals(lat, 42.906797030808235+v, 0);
+     assertEquals(lon, 76.69455762489834+v, 0);
+     ++v;
+    }
+
+    double distance = tuples.get(0).getDouble("c");
+    assertEquals(distance, 555975.3986718428, 1.0);
+
+  }
   
   @Test
   public void testHist() throws Exception {
@@ -1327,7 +1373,7 @@ public class MathExpressionTest extends SolrCloudTestCase {
 
   @Test
   public void testStandardize() throws Exception {
-    String cexpr = "let(echo=true, a=standardize(matrix(array(1,2,3), array(4,5,6))), b=standardize(array(4,5,6)))";
+    String cexpr = "let(echo=true, a=standardize(matrix(array(1,2,3), array(4,5,6))), b=standardize(array(4,5,6)),  c=zscores(array(4,5,6)))";
     ModifiableSolrParams paramsLoc = new ModifiableSolrParams();
     paramsLoc.set("expr", cexpr);
     paramsLoc.set("qt", "/stream");
@@ -1353,9 +1399,15 @@ public class MathExpressionTest extends SolrCloudTestCase {
 
     List<Number> array3 = (List<Number>)tuples.get(0).get("b");
     assertEquals(array3.size(), 3);
-    assertEquals(array2.get(0).doubleValue(), -1, 0.0);
-    assertEquals(array2.get(1).doubleValue(), 0, 0.0);
-    assertEquals(array2.get(2).doubleValue(), 1, 0.0);
+    assertEquals(array3.get(0).doubleValue(), -1, 0.0);
+    assertEquals(array3.get(1).doubleValue(), 0, 0.0);
+    assertEquals(array3.get(2).doubleValue(), 1, 0.0);
+
+    List<Number> array4 = (List<Number>)tuples.get(0).get("c");
+    assertEquals(array4.size(), 3);
+    assertEquals(array4.get(0).doubleValue(), -1, 0.0);
+    assertEquals(array4.get(1).doubleValue(), 0, 0.0);
+    assertEquals(array4.get(2).doubleValue(), 1, 0.0);
   }
 
   @Test
@@ -2731,6 +2783,91 @@ public class MathExpressionTest extends SolrCloudTestCase {
   }
 
   @Test
+  public void testCache() throws Exception {
+    String cexpr = "putCache(space1, key1, dotProduct(array(2,4,6,8,10,12),array(1,2,3,4,5,6)))";
+    ModifiableSolrParams paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    String url = cluster.getJettySolrRunners().get(0).getBaseUrl().toString()+"/"+COLLECTIONORALIAS;
+    TupleStream solrStream = new SolrStream(url, paramsLoc);
+    StreamContext context = new StreamContext();
+    solrStream.setStreamContext(context);
+    List<Tuple> tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    Number dotProduct = (Number)tuples.get(0).get("return-value");
+    assertTrue(dotProduct.doubleValue() == 182);
+
+
+    cexpr = "getCache(space1, key1)";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    dotProduct = (Number)tuples.get(0).get("return-value");
+    assertTrue(dotProduct.doubleValue() == 182);
+
+    cexpr = "listCache(space1)";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    List<String> keys = (List<String>)tuples.get(0).get("return-value");
+    assertEquals(keys.size(), 1);
+    assertEquals(keys.get(0), "key1");
+
+    cexpr = "listCache()";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    keys = (List<String>)tuples.get(0).get("return-value");
+    assertEquals(keys.size(), 1);
+    assertEquals(keys.get(0), "space1");
+
+    cexpr = "removeCache(space1, key1)";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    dotProduct = (Number)tuples.get(0).get("return-value");
+    assertTrue(dotProduct.doubleValue() == 182);
+
+
+    cexpr = "listCache(space1)";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    keys = (List<String>)tuples.get(0).get("return-value");
+    assertEquals(keys.size(), 0);
+
+
+
+
+
+  }
+
+  @Test
   public void testExponentialMovingAverage() throws Exception {
     String cexpr = "expMovingAvg(array(22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, " +
                    "22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19,"+
@@ -2976,6 +3113,7 @@ public class MathExpressionTest extends SolrCloudTestCase {
 
   @Test
   // 12-Jun-2018 @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") //2018-03-10
+  @BadApple(bugUrl="https://issues.apache.org/jira/browse/SOLR-12028") // added 20-Sep-2018
   public void testMultiVariateNormalDistribution() throws Exception {
     String cexpr = "let(echo=true," +
         "     a=array(1,2,3,4,5,6,7)," +
@@ -3450,7 +3588,7 @@ public class MathExpressionTest extends SolrCloudTestCase {
                                   "c=array(4.699999809, 8.800000191, 15.10000038, 12.19999981, 10.60000038, 3.5, 9.699999809, 5.900000095, 20.79999924, 7.900000095)," +
                                   "d=array(85.09999847, 106.3000031, 50.20000076, 130.6000061, 54.79999924, 30.29999924, 79.40000153, 91, 135.3999939, 89.30000305)," +
         "e=transpose(matrix(a, b, c))," +
-        "f=knnRegress(e, d, 1)," +
+        "f=knnRegress(e, d, 1, scale=true)," +
         "g=predict(f, e))";
     ModifiableSolrParams paramsLoc = new ModifiableSolrParams();
     paramsLoc.set("expr", cexpr);
@@ -3480,7 +3618,7 @@ public class MathExpressionTest extends SolrCloudTestCase {
         "c=array(4.699999809, 8.800000191, 15.10000038, 12.19999981, 10.60000038, 3.5, 9.699999809, 5.900000095, 20.79999924, 7.900000095)," +
         "d=array(85.09999847, 106.3000031, 50.20000076, 130.6000061, 54.79999924, 30.29999924, 79.40000153, 91, 135.3999939, 89.30000305)," +
         "e=transpose(matrix(a, b, c))," +
-        "f=knnRegress(e, d, 1)," +
+        "f=knnRegress(e, d, 1, scale=true)," +
         "g=predict(f, array(8, 5, 4)))";
     paramsLoc = new ModifiableSolrParams();
     paramsLoc.set("expr", cexpr);
@@ -3494,12 +3632,14 @@ public class MathExpressionTest extends SolrCloudTestCase {
     Number prediction = (Number)tuples.get(0).get("g");
     assertEquals(prediction.doubleValue(), 85.09999847, 0);
 
-    cexpr = "let(echo=true, a=array(8.5, 12.89999962, 5.199999809, 10.69999981, 3.099999905, 3.5, 9.199999809, 9, 15.10000038, 8.19999981), " +
-        "b=array(5.099999905, 5.800000191, 2.099999905, 8.399998665, 2.900000095, 1.200000048, 3.700000048, 7.599999905, 5.699999809, 4.5)," +
-        "c=array(4.699999809, 8.800000191, 15.10000038, 12.19999981, 10.60000038, 3.5, 9.699999809, 5.900000095, 20.79999924, 4.900000095)," +
+    //Test robust. Take the median rather then average
+
+    cexpr = "let(echo=true, a=array(8.5, 12.89999962, 5.199999809, 10.69999981, 3.099999905, 3.5, 9.199999809, 9, 8.10000038, 8.19999981), " +
+        "b=array(5.099999905, 5.800000191, 2.099999905, 8.399998665, 2.900000095, 1.200000048, 3.700000048, 5.599999905, 5.699999809, 4.5)," +
+        "c=array(4.699999809, 8.800000191, 15.10000038, 12.19999981, 10.60000038, 3.5, 9.699999809, 5.900000095, 4.79999924, 4.900000095)," +
         "d=array(85.09999847, 106.3000031, 50.20000076, 130.6000061, 54.79999924, 30.29999924, 79.40000153, 91, 135.3999939, 89.30000305)," +
         "e=transpose(matrix(a, b, c))," +
-        "f=knnRegress(e, d, 2)," +
+        "f=knnRegress(e, d, 3, scale=true, robust=true)," +
         "g=predict(f, array(8, 5, 4)))";
     paramsLoc = new ModifiableSolrParams();
     paramsLoc.set("expr", cexpr);
@@ -3511,7 +3651,27 @@ public class MathExpressionTest extends SolrCloudTestCase {
     tuples = getTuples(solrStream);
     assertTrue(tuples.size() == 1);
     prediction = (Number)tuples.get(0).get("g");
-    assertEquals(prediction.doubleValue(), 87.20000076, 0);
+    assertEquals(prediction.doubleValue(), 89.30000305, 0);
+
+
+    //Test univariate regression with scaling off
+
+    cexpr = "let(echo=true, a=sequence(10, 0, 1), " +
+        "b=transpose(matrix(a))," +
+        "c=knnRegress(b, a, 3)," +
+        "d=predict(c, array(3)))";
+    paramsLoc = new ModifiableSolrParams();
+    paramsLoc.set("expr", cexpr);
+    paramsLoc.set("qt", "/stream");
+    url = cluster.getJettySolrRunners().get(0).getBaseUrl().toString()+"/"+COLLECTIONORALIAS;
+    solrStream = new SolrStream(url, paramsLoc);
+    context = new StreamContext();
+    solrStream.setStreamContext(context);
+    tuples = getTuples(solrStream);
+    assertTrue(tuples.size() == 1);
+    prediction = (Number)tuples.get(0).get("d");
+    assertEquals(prediction.doubleValue(), 3, 0);
+
   }
 
   @Test
